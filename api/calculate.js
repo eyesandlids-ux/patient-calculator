@@ -1,60 +1,237 @@
-import Anthropic from "@anthropic-ai/sdk";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Remagin Patient Cost Estimator</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f0f4f8;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+    .container {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      max-width: 640px;
+      width: 100%;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+    h1 { color: #1a3a5c; font-size: 1.5rem; margin-bottom: 8px; }
+    p.subtitle { color: #6b7280; font-size: 0.9rem; margin-bottom: 24px; }
+    label { display: block; font-weight: 500; color: #374151; margin-bottom: 6px; font-size: 0.9rem; }
+    input, textarea {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      box-sizing: border-box;
+      margin-bottom: 16px;
+      font-family: inherit;
+    }
+    textarea { height: 120px; resize: vertical; }
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #1a3a5c;
+      box-shadow: 0 0 0 3px rgba(26,58,92,0.1);
+    }
+    .instructions {
+      background: #eff6ff;
+      border: 1px solid #93c5fd;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 20px;
+      font-size: 0.85rem;
+      color: #1e3a5f;
+    }
+    .instructions ol { margin: 8px 0 0 0; padding-left: 20px; }
+    .instructions li { margin-bottom: 4px; }
+    button {
+      background: #1a3a5c;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      width: 100%;
+    }
+    button:hover { background: #2d5a8e; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    .result {
+      margin-top: 24px;
+      padding: 20px;
+      background: #f8fafc;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      display: none;
+    }
+    .result.show { display: block; }
+    .result h2 { color: #1a3a5c; font-size: 1.1rem; margin-bottom: 16px; }
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 0.9rem;
+    }
+    .result-row:last-child { border-bottom: none; }
+    .result-row .label { color: #6b7280; }
+    .result-row .value { font-weight: 600; color: #111827; }
+    .result-row.highlight .value { color: #1a3a5c; font-size: 1.1rem; }
+    .loading { text-align: center; color: #6b7280; padding: 20px; display: none; }
+    .loading.show { display: block; }
+    .error {
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      color: #991b1b;
+      padding: 12px;
+      border-radius: 8px;
+      margin-top: 16px;
+      display: none;
+      font-size: 0.9rem;
+    }
+    .error.show { display: block; }
+    .notes {
+      margin-top: 12px;
+      padding: 10px;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      color: #92400e;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🏥 Remagin Patient Cost Estimator</h1>
+    <p class="subtitle">Extract patient data from ModMed and calculate their cost responsibility.</p>
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+    <div class="instructions">
+      <strong>How to use:</strong>
+      <ol>
+        <li>Open the patient's <strong>Insurance page</strong> in ModMed</li>
+        <li>Select all text on the page (<strong>Cmd+A</strong> or <strong>Ctrl+A</strong>), copy it (<strong>Cmd+C</strong> or <strong>Ctrl+C</strong>)</li>
+        <li>Paste it into the box below</li>
+        <li>Enter remaining deductible if applicable</li>
+        <li>Click Calculate</li>
+      </ol>
+    </div>
 
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+    <label for="patientData">Paste ModMed Patient Page Text</label>
+    <textarea id="patientData" placeholder="Paste the full text from the ModMed patient insurance page here..."></textarea>
 
-  const { modmedUrl } = req.body;
+    <label for="deductible">Remaining Deductible ($)</label>
+    <input type="text" id="deductible" placeholder="0.00" value="0" />
 
-  if (!modmedUrl) {
-    return res.status(400).json({ error: "ModMed URL is required" });
-  }
+    <button id="calculateBtn" onclick="calculate()">Calculate Patient Responsibility</button>
 
-  try {
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: `You are a medical billing assistant for Remagin, an ophthalmology practice. 
-          
-Given this ModMed patient insurance URL: ${modmedUrl}
+    <div class="loading" id="loading">⏳ Calculating patient responsibility...</div>
+    <div class="error" id="error"></div>
 
-Please extract:
-1. Patient name
-2. Primary insurance (map to one of: Medicare, Humana, UHC, Aetna, Cigna, BCBS/Florida Blue, Ambetter, Curative Administrators, MultiPlan, CoreSource)
-3. Any sticky notes about benefits (copay, deductible, OON details)
-4. Today's CPT codes from the financials ledger
-5. Whether deductible has been met
+    <div class="result" id="result">
+      <h2 id="patientName"></h2>
+      <div class="result-row">
+        <span class="label">Insurance</span>
+        <span class="value" id="insurance"></span>
+      </div>
+      <div class="result-row">
+        <span class="label">CPT Codes</span>
+        <span class="value" id="cptCodes"></span>
+      </div>
+      <div class="result-row">
+        <span class="label">Total Allowed</span>
+        <span class="value" id="totalAllowed"></span>
+      </div>
+      <div class="result-row">
+        <span class="label">Deductible Applied</span>
+        <span class="value" id="deductibleApplied"></span>
+      </div>
+      <div class="result-row">
+        <span class="label">Insurance Pays</span>
+        <span class="value" id="insurancePays"></span>
+      </div>
+      <div class="result-row highlight">
+        <span class="label">Patient Owes</span>
+        <span class="value" id="patientOwes"></span>
+      </div>
+      <div class="notes" id="notes" style="display:none"></div>
+    </div>
+  </div>
 
-Then calculate patient responsibility using the Remagin Patient Cost Calculator at:
-https://eyesandlids-ux.github.io/patient-calculator/patient_cost_calculator.html
+  <script>
+    async function calculate() {
+      const patientData = document.getElementById('patientData').value.trim();
+      const deductible = document.getElementById('deductible').value.trim();
 
-Return a JSON response with:
-{
-  "patientName": "",
-  "insurance": "",
-  "cptCodes": [],
-  "deductibleMet": true/false,
-  "patientOwes": 0.00,
-  "insurancePays": 0.00,
-  "totalAllowed": 0.00,
-  "notes": ""
-}`,
-        },
-      ],
-    });
+      if (!patientData) {
+        showError('Please paste the patient data from ModMed.');
+        return;
+      }
 
-    const response = message.content[0].text;
-    res.status(200).json({ result: response });
-  } catch (error) {
-    console.error("Error:", error);
-    res.status(500).json({ error: "Failed to process request" });
-  }
-}
+      const btn = document.getElementById('calculateBtn');
+      btn.disabled = true;
+      document.getElementById('loading').classList.add('show');
+      document.getElementById('result').classList.remove('show');
+      document.getElementById('error').classList.remove('show');
+
+      try {
+        const response = await fetch('/api/calculate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ patientData, deductible })
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Something went wrong');
+
+        let result;
+        try {
+          const jsonMatch = data.result.match(/\{[\s\S]*\}/);
+          result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+        } catch(e) { result = null; }
+
+        if (result) {
+          document.getElementById('patientName').textContent = result.patientName || 'Patient';
+          document.getElementById('insurance').textContent = result.insurance || '—';
+          document.getElementById('cptCodes').textContent = (result.cptCodes || []).join(', ') || '—';
+          document.getElementById('totalAllowed').textContent = result.totalAllowed ? '$' + Number(result.totalAllowed).toFixed(2) : '—';
+          document.getElementById('deductibleApplied').textContent = result.deductibleApplied ? '$' + Number(result.deductibleApplied).toFixed(2) : '$0.00';
+          document.getElementById('insurancePays').textContent = result.insurancePays ? '$' + Number(result.insurancePays).toFixed(2) : '—';
+          document.getElementById('patientOwes').textContent = result.patientOwes !== undefined ? '$' + Number(result.patientOwes).toFixed(2) : '—';
+
+          if (result.notes) {
+            document.getElementById('notes').textContent = '⚠️ ' + result.notes;
+            document.getElementById('notes').style.display = 'block';
+          } else {
+            document.getElementById('notes').style.display = 'none';
+          }
+
+          document.getElementById('result').classList.add('show');
+        } else {
+          showError(data.result);
+        }
+
+      } catch (error) {
+        showError(error.message);
+      } finally {
+        btn.disabled = false;
+        document.getElementById('loading').classList.remove('show');
+      }
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+  </script>
+</body>
+</html>
