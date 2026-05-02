@@ -33,12 +33,12 @@ CPT codes and allowed amounts:
 ${JSON.stringify(cptRates, null, 2)}
 
 Calculate patient responsibility using EXACT rates above. Rules:
-- coinsurance: patient pays coinsurance% of allowed after deductible
-- copay: patient pays fixed copay per visit after deductible
-- both: patient pays copay + coinsurance% of allowed after deductible
-- none: patient pays $0 (fully covered)
-- Apply deductible first before cost sharing
-- If humana and sticky note has copay, use that copay amount instead
+- coinsurance: apply deductible first, then patient pays coinsurance% of remainder
+- copay: patient pays whichever is GREATER — the remaining deductible OR the copay (not both added together). Once deductible is met, patient pays just the copay.
+- both: apply deductible first, then patient pays copay + coinsurance% on remainder. Patient pays whichever is greater — deductible or (copay + coinsurance).
+- none: patient pays $0
+- Key rule: copay counts toward the deductible. Never add deductible + copay together.
+- If the sticky note contains specific benefit details (copay amount, deductible info, OOP max, etc.), use those values instead of the default cost sharing settings. The sticky note is the source of truth for patient-specific benefits.
 - Sum all codes together
 
 Return ONLY valid JSON:
