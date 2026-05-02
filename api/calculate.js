@@ -9,7 +9,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { patientName, insurance, cptRates, stickyNote, deductible, unknownCodes } = req.body;
+  const { patientName, insurance, cptRates, stickyNote, deductible, unknownCodes, csType, coinsurancePct, copayAmt } = req.body;
 
   try {
     const message = await client.messages.create({
@@ -22,21 +22,26 @@ export default async function handler(req, res) {
 
 Patient: ${patientName}
 Insurance: ${insurance}
+Cost Sharing Type: ${csType || 'coinsurance'}
+Coinsurance %: ${coinsurancePct || 20}
+Copay Amount: $${copayAmt || 0}
 Remaining Deductible: $${deductible || 0}
 Sticky Note: ${stickyNote || "None"}
-Unknown codes (exclude from calculation): ${(unknownCodes || []).join(", ") || "None"}
+Unknown codes (exclude): ${(unknownCodes || []).join(", ") || "None"}
 
-CPT codes and allowed amounts from fee schedule:
+CPT codes and allowed amounts:
 ${JSON.stringify(cptRates, null, 2)}
 
-Calculate patient responsibility using these EXACT rates. Rules:
-- Default: patient pays 20% coinsurance after deductible
-- humana: if sticky note has a copay amount, use that as patient responsibility
-- If deductible > 0, apply it first before coinsurance kicks in
-- If a rate is null or 0, note it separately
-- Total all codes together
+Calculate patient responsibility using EXACT rates above. Rules:
+- coinsurance: patient pays coinsurance% of allowed after deductible
+- copay: patient pays fixed copay per visit after deductible
+- both: patient pays copay + coinsurance% of allowed after deductible
+- none: patient pays $0 (fully covered)
+- Apply deductible first before cost sharing
+- If humana and sticky note has copay, use that copay amount instead
+- Sum all codes together
 
-Return ONLY valid JSON, no other text:
+Return ONLY valid JSON:
 {
   "patientName": "",
   "insurance": "",
