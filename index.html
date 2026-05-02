@@ -149,6 +149,11 @@
     <label for="deductible">Remaining Deductible ($)</label>
     <input type="text" id="deductible" placeholder="0.00" value="0" />
 
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+      <input type="checkbox" id="hasSecondary" style="width:auto;margin:0;" />
+      <label for="hasSecondary" style="margin:0;font-size:0.9rem;">Patient has secondary insurance on file</label>
+    </div>
+
     <button id="calculateBtn" onclick="calculate()">Calculate Patient Responsibility</button>
 
     <div class="loading" id="loading">⏳ Calculating...</div>
@@ -181,6 +186,7 @@
         <span class="value" id="resultPatientOwes"></span>
       </div>
       <div class="notes" id="resultNotes" style="display:none"></div>
+      <div id="secondaryNotice" style="display:none;margin-top:12px;padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:0.85rem;color:#166534;">⚠️ Secondary insurance on file — <strong>do not charge card yet.</strong> Wait for primary EOB before collecting. Maximum patient responsibility shown above.</div>
     </div>
   </div>
 
@@ -218,6 +224,7 @@
       const insurance = document.getElementById('insurance').value;
       const stickyNote = document.getElementById('stickyNote').value.trim();
       const deductible = parseFloat(document.getElementById('deductible').value) || 0;
+      const hasSecondary = document.getElementById('hasSecondary').checked;
 
       if (!insurance) { showError('Please select an insurance.'); return; }
 
@@ -272,6 +279,7 @@
           if (notes) { document.getElementById('resultNotes').textContent = '⚠️ ' + notes; document.getElementById('resultNotes').style.display = 'block'; }
           else { document.getElementById('resultNotes').style.display = 'none'; }
 
+          document.getElementById('secondaryNotice').style.display = hasSecondary ? 'block' : 'none';
           document.getElementById('result').classList.add('show');
         } else {
           showError(data.result || 'Could not parse result.');
