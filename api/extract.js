@@ -30,7 +30,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { financialsPageText, patientId, todaysDate } = req.body;
+  const { financialsPageText, patientId, todaysDate, todaysDateShort } = req.body;
 
   try {
     const message = await client.messages.create({
@@ -49,7 +49,7 @@ LEDGER PAGE:
 ${financialsPageText?.substring(0, 6000)}
 
 IMPORTANT RULES:
-- For todaysCptCodes: ONLY include CPT codes from charges dated exactly ${todaysDate}. If you cannot confirm a code is from today, exclude it. If no charges exist for today, return [].
+- For todaysCptCodes: ONLY include CPT codes from charges where the DOS column shows ${todaysDateShort} or ${todaysDate}. Look for the date in the first column labeled DOS. If no charges match today's date, return [].
 - For primaryInsurance: look for insurance/payer name in the ledger. It may appear on charge lines, in a payer column, or in billing alerts.
 - For billingAlert: look for any "Billing Alert" text on the page — this contains important benefit details like copay amounts, deductible status, OOP max.
 - For stickyNote: only include if it appears to be recent (within last 30 days based on any date shown). Ignore IOP readings like (-1,-2).
