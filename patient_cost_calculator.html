@@ -76,6 +76,7 @@
         <label>Insurance</label>
         <select id="ins-select" onchange="onInsuranceChange()">
           <option value="medicare">Medicare</option>
+          <option value="medicare_advantage">Medicare Advantage (MA)</option>
           <option value="humana">Humana</option>
           <option value="cigna">Cigna</option>
           <option value="aetna">Aetna</option>
@@ -128,6 +129,12 @@
         <p style="font-size:0.78rem;color:#6b7280;margin-top:auto;padding-bottom:6px;">Leave at $0 if deductible is fully met.</p>
       </div>
     </div>
+    <div class="form-row" style="margin-bottom:0.5rem;">
+      <div class="form-group" style="flex-direction:row;align-items:center;gap:10px;">
+        <input type="checkbox" id="has-secondary" style="width:auto;margin:0;" onchange="calculate()">
+        <label for="has-secondary" style="margin:0;font-size:0.9rem;">Patient has secondary insurance on file</label>
+      </div>
+    </div>
 
     <hr class="divider">
 
@@ -156,6 +163,7 @@
       <div class="summary-card"><div class="card-label">Insurance Pays</div><div class="card-value" id="total-insurance">$0.00</div></div>
       <div class="summary-card highlight"><div class="card-label">Patient Owes</div><div class="card-value" id="total-patient">$0.00</div></div>
     </div>
+    <div class="notice" id="secondary-notice" style="background:#f0fdf4;border-color:#86efac;color:#166534;display:none;">⚠️ Secondary insurance on file — <strong>do not charge card yet.</strong> Wait for primary EOB before collecting. Maximum patient responsibility shown above.</div>
     <div class="notice" id="unknown-notice">One or more codes were not found in this fee schedule and are excluded from totals. Verify the code or send updated rates.</div>
     <div class="notice" id="oon-notice" style="background:#fff7ed;border-color:#fb923c;color:#7c2d12;">⚠️ Humana patients are seen <strong>out-of-network</strong>. Rates shown are estimates only and do not reflect a contracted fee schedule. Actual patient responsibility will depend on their individual OON benefits.</div>
     <div class="notice" id="cigna-notice" style="background:#eff6ff;border-color:#93c5fd;color:#1e3a5f;">ℹ️ Cigna reimburses at <strong>105% of Cigna RBRVS</strong> (Rest of Florida locality). Rates shown are estimates — actual contracted amounts may differ. Injectable drugs and lab codes use the Cigna Standard Fee Schedule, which is not publicly available.</div>
@@ -179,66 +187,67 @@ const SUB_PLANS = {
 const RAW = {
 
 medicare:[
-["99205","Level 5 New",209.37],["99204","Level 4 New",166.36],["99203","Level 3 New",109.17],
-["92004","Comprehensive New",147.23],["92002","Intermediate New",80.30],
-["99223","Hospital Level 4 New",207.04],["99222","Hospital Level 3 New",139.93],
-["99231","Hospital Follow Up",39.68],["99215","Level 5 Established",146.16],
-["99214","Level 4 Established",107.96],["99213","Level 3 Established",72.53],
-["99212","Level 2 Established",43.63],["92014","Comp Established",122.38],
-["92012","Inter Established",84.50],["99024","Post Op",0],
-["92071","Bandage CL",38.04],["65210","Removal of Conj FB",68.77],
-["65222","Removal of Corn FB",67.04],["65430","Corneal Culture",115.16],
-["65436","EDTA Chelation",389.13],["65435","Superficial Keratectomy",79.23],
-["68761","Punctal Plugs",147.02],["68760","Punctal Cautery",199.34],
-["67515","Subtenons Kenalog Inj",97.81],["J3301","Kenalog Supply Code",1.48],
-["92225","Extended DFE",26.89],["92020","Gonioscopy",26.53],
+// Rates: Medicare FL99 Jan 2026 PAR amounts
+["99205","Level 5 New",238.11],["99204","Level 4 New",177.76],["99203","Level 3 New",117.67],
+["92004","Comprehensive New",146.46],["92002","Intermediate New",82.76],
+["99223","Hospital Level 4 New",159.70],["99222","Hospital Level 3 New",119.78],
+["99231","Hospital Follow Up",45.08],["99215","Level 5 Established",191.88],
+["99214","Level 4 Established",135.02],["99213","Level 3 Established",94.56],
+["99212","Level 2 Established",58.96],["92014","Comp Established",124.48],
+["92012","Inter Established",88.43],["99024","Post Op",0],
+["92071","Bandage CL",35.40],["65210","Removal of Conj FB",37.82],
+["65222","Removal of Corn FB",65.80],["65430","Corneal Culture",114.59],
+["65436","EDTA Chelation",388.72],["65435","Superficial Keratectomy",82.43],
+["68761","Punctal Plugs",140.28],["68760","Punctal Cautery",214.90],
+["67515","Subtenons Kenalog Inj",51.66],["J3301","Kenalog Supply Code",1.48],
+["92225","Extended DFE",26.89],["92020","Gonioscopy",26.26],
 ["87799","EKC PCR",null],["83516","Inflammadry",null],["83861","Tear Lab",null],
 ["95004","Allergy Testing",null],["36416","Sjo Testing",null],
-["92083","HVF Extended",63.41],["92082","HVF Intermediate",47.40],
-["92081","HVF Limited",33.80],["92136","IOL Master",88.65],
-["76514","Pachymetry",15.33],["92025","Corneal Topography",37.67],
-["92250","Fundus Photography",77.47],["92285","External Photos",20.33],
-["92133","Optic Nerve OCT",44.78],["92134","Macula OCT",43.75],
-["92132","Ant Seg OCT",34.56],["68840","Probe and Irrigation",127.55],
-["67800","Single Chalazion",127.14],["67801","Mult Chalazion",162.52],
-["67820","Epilation",50.17],["11900","Lid Kenalog Injection",55.33],
-["67935","Lid Laceration Full",595.00],["67930","Lid Laceration Partial",363.57],
-["67840","Lid Lesion Excision",272.39],["67880","Tarsorrhaphy",456.98],
-["67710","Severing of Tarsorrhaphy",219.07],["37609","Temporal Artery Biopsy",319.78],
-["64612","Medical BOTOX Inj",134.87],["J0585","BOTOX Units",5.47],
-["15823","Upper Lid Bleph",609.10],["15824","Transcoronal Brow Lift",null],
-["67900","Brow Ptosis Repair",640.67],["67901","Supramid Sling Ptosis Repair",754.58],
-["67902","Fascia Lata Sling Ptosis Repair",731.06],["67903","Internal Ptosis Repair",592.98],
-["67904","External Ptosis Repair",732.53],["67909","Repair Overcorrection Ptosis",536.49],
-["67911","Lid Retraction Repair",566.41],["67917","Ectropion Repair",600.83],
-["67921","Suture Ectropion Repair",455.72],["67924","Entropion Repair",627.61],
-["68700","Canalicular Repair",608.25],["68720","DCR",761.54],
-["30930","Fracture of Nasal Turbinate",125.61],["68815","Intub of Crawford Stents",445.13],
-["65093","Evisceration w/implant",627.68],["65103","Enucleation w/implant",769.69],
-["65175","Removal of Ocular Implant",656.96],["65135","2nd Insertion Ocular Implant",743.09],
-["67400","Anterior Orbitotomy",933.03],["67412","Orbitotomy w/removal of lesion",854.51],
-["67420","Lateral Orbitotomy",1635.16],["67550","Orbital Fracture",968.46],
-["15275","Spacer Graft",151.32],["15260","Skin Graft",1026.24],
-["67974","Hugh's Flap",938.23],["67961","Excision to 1/4 lid margin",574.16],
-["14060","Tissue Transfer Small",788.64],["15732","Sliding Temporal Flap",1311.75],
-["67875","Frost Suture",169.49],["66984","Cataract with IOL",644.41],
-["66982","Complex Cataract",801.95],["66840","Lens Material Aspiration",701.79],
-["66825","IOL Repositioning",762.00],["66986","IOL Exchange",914.71],
-["66180","Tube Shunt",1145.33],["66250","Revision of Bleb",745.96],
-["65426","Pterygium with Graft",649.86],["65756","DSAEK/DMEK",1196.08],
-["65730","PK (phakia)",1235.70],["65750","PK (aphakia)",1243.55],
-["65755","PK (pseudophakia)",1236.71],["65710","DALK",1113.20],
-["65778","AMT",1345.19],["67255","Corneal Patch Graft",686.29],
-["65280","Corneal Lac Repair w/o Uvea",677.74],["65285","Corneal Lac Repair w/Uvea",1118.16],
-["66682","Iris Repair",638.57],["65870","Lysis of Anterior Synechiae",593.81],
-["65780","Ocular Surface Reconstruction",892.61],["68362","Gundersen Flap",661.70],
-["67010","Anterior Vitrectomy",546.17],["65770","Keratoprosthesis",1419.47],
-["65855","SLT",338.87],["66761","YAG Iridotomy",295.51],
-["66821","YAG Capsulotomy",329.74],["67031","YAG Vitreous",388.93],
-["0191T","iStent",758.27],["68360","Revision Eyelid Lining",539.92],
-["66985","2nd Lens Insertion",1031.75],["68320","Revise/Graft Eyelid Lining",865.00],
-["67700","Bleph Eyelid",360.00],["65779","Prokera Cover Eye w/Membrane",1066.79],
-["68115","Excision Conj Lesion >1cm",330.00],["68135","Remove Eyelid Lining Lesion",186.00],
+["92083","HVF Extended",62.07],["92082","HVF Intermediate",46.28],
+["92081","HVF Limited",33.04],["92136","IOL Master",47.13],
+["76514","Pachymetry",11.75],["92025","Corneal Topography",36.31],
+["92250","Fundus Photography",36.38],["92285","External Photos",23.11],
+["92133","Optic Nerve OCT",30.18],["92134","Macula OCT",32.11],
+["92132","Ant Seg OCT",29.20],["68840","Probe and Irrigation",131.87],
+["67800","Single Chalazion",128.87],["67801","Mult Chalazion",163.21],
+["67820","Epilation",18.70],["11900","Lid Kenalog Injection",55.95],
+["67935","Lid Laceration Full",599.08],["67930","Lid Laceration Partial",368.57],
+["67840","Lid Lesion Excision",271.77],["67880","Tarsorrhaphy",463.77],
+["67710","Severing of Tarsorrhaphy",231.94],["37609","Temporal Artery Biopsy",317.99],
+["64612","Medical BOTOX Inj",142.70],["J0585","BOTOX Units",5.47],
+["15823","Upper Lid Bleph",625.45],["15824","Transcoronal Brow Lift",null],
+["67900","Brow Ptosis Repair",649.46],["67901","Supramid Sling Ptosis Repair",780.89],
+["67902","Fascia Lata Sling Ptosis Repair",616.49],["67903","Internal Ptosis Repair",598.02],
+["67904","External Ptosis Repair",735.36],["67909","Repair Overcorrection Ptosis",545.53],
+["67911","Lid Retraction Repair",478.00],["67917","Ectropion Repair",615.34],
+["67921","Suture Ectropion Repair",466.02],["67924","Entropion Repair",639.42],
+["68700","Canalicular Repair",516.26],["68720","DCR",701.09],
+["30930","Fracture of Nasal Turbinate",109.27],["68815","Intub of Crawford Stents",364.37],
+["65093","Evisceration w/implant",650.77],["65103","Enucleation w/implant",771.33],
+["65175","Removal of Ocular Implant",689.67],["65135","2nd Insertion Ocular Implant",760.72],
+["67400","Anterior Orbitotomy",903.39],["67412","Orbitotomy w/removal of lesion",865.42],
+["67420","Lateral Orbitotomy",1506.65],["67550","Orbital Fracture",948.65],
+["15275","Spacer Graft",159.54],["15260","Skin Graft",997.59],
+["67974","Hugh's Flap",779.26],["67961","Excision to 1/4 lid margin",583.12],
+["14060","Tissue Transfer Small",770.71],["15732","Sliding Temporal Flap",1311.75],
+["67875","Frost Suture",176.70],["66984","Cataract with IOL",462.65],
+["66982","Complex Cataract",631.98],["66840","Lens Material Aspiration",590.67],
+["66825","IOL Repositioning",723.53],["66986","IOL Exchange",765.51],
+["66180","Tube Shunt",970.80],["66250","Revision of Bleb",738.67],
+["65426","Pterygium with Graft",658.25],["65756","DSAEK/DMEK",996.10],
+["65730","PK (phakia)",1067.65],["65750","PK (aphakia)",1070.91],
+["65755","PK (pseudophakia)",1065.96],["65710","DALK",981.09],
+["65778","AMT",1220.11],["67255","Corneal Patch Graft",594.17],
+["65280","Corneal Lac Repair w/o Uvea",566.74],["65285","Corneal Lac Repair w/Uvea",932.45],
+["66682","Iris Repair",566.32],["65870","Lysis of Anterior Synechiae",511.47],
+["65780","Ocular Surface Reconstruction",513.27],["68362","Gundersen Flap",559.24],
+["67010","Anterior Vitrectomy",467.65],["65770","Keratoprosthesis",1186.61],
+["65855","SLT",243.02],["66761","YAG Iridotomy",294.43],
+["66821","YAG Capsulotomy",330.05],["67031","YAG Vitreous",385.44],
+["0191T","iStent",758.27],["68360","Revision Eyelid Lining",537.11],
+["66985","2nd Lens Insertion",658.42],["68320","Revise/Graft Eyelid Lining",733.13],
+["67700","Bleph Eyelid",272.25],["65779","Prokera Cover Eye w/Membrane",1094.88],
+["68115","Excision Conj Lesion >1cm",323.36],["68135","Remove Eyelid Lining Lesion",158.08],
 ],
 
 humana:[
@@ -421,63 +430,63 @@ aetna:[
 ],
 
 uhc:[
-// Rates from UHC contract ORLJX 1512A NonFacility, eff. 12/15/2023
+// Rates from UHC contract ORLJX 1512A NonFacility, eff. 12/15/2023 (78% 2020 CMS Non-Facility)
 ["99205","Level 5 New",134.12],["99204","Level 4 New",129.78],["99203","Level 3 New",84.50],
-["92004","Comprehensive New",116.04],["92002","Intermediate New",49.12],
+["92004","Comprehensive New",116.04],["92002","Intermediate New",64.70],
 ["99223","Hospital Level 4 New",136.00],["99222","Hospital Level 3 New",92.71],
 ["99231","Hospital Follow Up",28.05],["99215","Level 5 Established",92.88],
 ["99214","Level 4 Established",85.16],["99213","Level 3 Established",58.68],
-["99212","Level 2 Established",27.54],["92014","Comp Established",97.33],
+["99212","Level 2 Established",35.45],["92014","Comp Established",97.33],
 ["92012","Inter Established",68.09],["99024","Post Op",0],
-["92071","Bandage CL",29.58],["65210","Removal of Conj FB",43.64],
-["65222","Removal of Corn FB",47.85],["65430","Corneal Culture",72.74],
+["92071","Bandage CL",29.41],["65210","Removal of Conj FB",35.93],
+["65222","Removal of Corn FB",53.31],["65430","Corneal Culture",90.97],
 ["65436","EDTA Chelation",237.80],["65435","Superficial Keratectomy",49.87],
-["68761","Punctal Plugs",115.13],["68760","Punctal Cautery",123.92],
+["68761","Punctal Plugs",115.13],["68760","Punctal Cautery",165.99],
 ["67515","Subtenons Kenalog Inj",58.58],["J3301","Kenalog Supply Code",1.81],
-["92225","Extended DFE",16.85],["92020","Gonioscopy",17.59],
+["92225","Extended DFE",16.85],["92020","Gonioscopy",21.46],
 ["87799","EKC PCR",26.27],["83516","Inflammadry",7.08],["83861","Tear Lab",9.90],
 ["95004","Allergy Testing",4.29],["36416","Sjo Testing",3.00],
-["92083","HVF Extended",48.41],["92082","HVF Intermediate",45.86],
-["92081","HVF Limited",34.80],["92136","IOL Master",47.94],
-["76514","Pachymetry",9.59],["92025","Corneal Topography",22.85],
-["92250","Fundus Photography",34.68],["92285","External Photos",27.68],
+["92083","HVF Extended",48.41],["92082","HVF Intermediate",36.54],
+["92081","HVF Limited",26.01],["92136","IOL Master",47.94],
+["76514","Pachymetry",9.52],["92025","Corneal Topography",28.48],
+["92250","Fundus Photography",34.68],["92285","External Photos",16.84],
 ["92133","Optic Nerve OCT",28.82],["92134","Macula OCT",31.56],
-["92132","Ant Seg OCT",28.61],["68840","Probe and Irrigation",76.52],
+["92132","Ant Seg OCT",24.41],["68840","Probe and Irrigation",101.65],
 ["67800","Single Chalazion",78.46],["67801","Mult Chalazion",100.79],
-["67820","Epilation",33.52],["11900","Lid Kenalog Injection",36.59],
+["67820","Epilation",20.71],["11900","Lid Kenalog Injection",42.97],
 ["67935","Lid Laceration Full",287.87],["67930","Lid Laceration Partial",157.07],
-["67840","Lid Lesion Excision",170.12],["67880","Tarsorrhaphy",277.35],
-["67710","Severing of Tarsorrhaphy",135.11],["37609","Temporal Artery Biopsy",146.48],
-["64612","Medical BOTOX Inj",105.17],["J0585","BOTOX Units",5.72],
+["67840","Lid Lesion Excision",215.84],["67880","Tarsorrhaphy",360.27],
+["67710","Severing of Tarsorrhaphy",135.11],["37609","Temporal Artery Biopsy",250.56],
+["64612","Medical BOTOX Inj",107.29],["J0585","BOTOX Units",5.72],
 ["15823","Upper Lid Bleph",481.99],["15824","Transcoronal Brow Lift",765.12],
-["67900","Brow Ptosis Repair",323.40],["67901","Supramid Sling Ptosis Repair",366.18],
-["67902","Fascia Lata Sling Ptosis Repair",451.88],["67903","Internal Ptosis Repair",316.49],
-["67904","External Ptosis Repair",371.13],["67909","Repair Overcorrection Ptosis",276.20],
-["67911","Lid Retraction Repair",344.90],["67917","Ectropion Repair",300.89],
-["67921","Suture Ectropion Repair",169.53],["67924","Entropion Repair",282.71],
-["68700","Canalicular Repair",370.99],["68720","DCR",472.01],
-["30930","Fracture of Nasal Turbinate",81.88],["68815","Intub of Crawford Stents",161.61],
-["65093","Evisceration w/implant",391.78],["65103","Enucleation w/implant",471.69],
-["65175","Removal of Ocular Implant",402.29],["65135","2nd Insertion Ocular Implant",455.33],
-["67400","Anterior Orbitotomy",579.65],["67412","Orbitotomy w/removal of lesion",535.48],
+["67900","Brow Ptosis Repair",505.29],["67901","Supramid Sling Ptosis Repair",366.18],
+["67902","Fascia Lata Sling Ptosis Repair",451.88],["67903","Internal Ptosis Repair",469.19],
+["67904","External Ptosis Repair",577.19],["67909","Repair Overcorrection Ptosis",425.44],
+["67911","Lid Retraction Repair",441.10],["67917","Ectropion Repair",481.12],
+["67921","Suture Ectropion Repair",169.53],["67924","Entropion Repair",501.49],
+["68700","Canalicular Repair",474.13],["68720","DCR",614.47],
+["30930","Fracture of Nasal Turbinate",81.88],["68815","Intub of Crawford Stents",300.89],
+["65093","Evisceration w/implant",532.30],["65103","Enucleation w/implant",642.28],
+["65175","Removal of Ocular Implant",558.13],["65135","2nd Insertion Ocular Implant",455.33],
+["67400","Anterior Orbitotomy",579.65],["67412","Orbitotomy w/removal of lesion",721.22],
 ["67420","Lateral Orbitotomy",1032.65],["67550","Orbital Fracture",608.33],
-["15275","Spacer Graft",85.55],["15260","Skin Graft",577.76],
-["67974","Hugh's Flap",597.84],["67961","Excision to 1/4 lid margin",288.02],
-["14060","Tissue Transfer Small",465.02],["15732","Sliding Temporal Flap",922.31],
-["67875","Frost Suture",106.58],["66984","Cataract with IOL",429.32],
+["15275","Spacer Graft",85.55],["15260","Skin Graft",792.48],
+["67974","Hugh's Flap",731.62],["67961","Excision to 1/4 lid margin",453.98],
+["14060","Tissue Transfer Small",610.40],["15732","Sliding Temporal Flap",922.31],
+["67875","Frost Suture",136.86],["66984","Cataract with IOL",429.32],
 ["66982","Complex Cataract",589.76],["66840","Lens Material Aspiration",428.74],
-["66825","IOL Repositioning",467.80],["66986","IOL Exchange",578.81],
-["66180","Tube Shunt",729.59],["66250","Revision of Bleb",340.11],
-["65426","Pterygium with Graft",293.73],["65756","DSAEK/DMEK",741.09],
-["65730","PK (phakia)",760.07],["65750","PK (aphakia)",772.08],
-["65755","PK (pseudophakia)",767.08],["65710","DALK",682.37],
+["66825","IOL Repositioning",467.80],["66986","IOL Exchange",712.83],
+["66180","Tube Shunt",895.27],["66250","Revision of Bleb",586.32],
+["65426","Pterygium with Graft",516.46],["65756","DSAEK/DMEK",931.94],
+["65730","PK (phakia)",978.48],["65750","PK (aphakia)",984.75],
+["65755","PK (pseudophakia)",980.32],["65710","DALK",682.37],
 ["65778","AMT",1062.02],["67255","Corneal Patch Graft",519.32],
 ["65280","Corneal Lac Repair w/o Uvea",413.87],["65285","Corneal Lac Repair w/Uvea",647.76],
 ["66682","Iris Repair",381.60],["65870","Lysis of Anterior Synechiae",362.90],
-["65780","Ocular Surface Reconstruction",543.70],["68362","Gundersen Flap",403.79],
+["65780","Ocular Surface Reconstruction",520.80],["68362","Gundersen Flap",403.79],
 ["67010","Anterior Vitrectomy",337.19],["65770","Keratoprosthesis",883.88],
-["65855","SLT",210.37],["66761","YAG Iridotomy",274.67],
-["66821","YAG Capsulotomy",258.81],["67031","YAG Vitreous",235.27],
+["65855","SLT",193.62],["66761","YAG Iridotomy",233.56],
+["66821","YAG Capsulotomy",258.81],["67031","YAG Vitreous",305.38],
 ["67028","Intravitreal Injection",79.75],["76512","Ophthalmic US",40.79],
 ["92015","Refraction",16.14],["92060","Sensormotor Exam",48.97],
 ["92235","Fluorescein Angiography",79.42],
@@ -740,6 +749,14 @@ for (const [code, desc, rate] of RAW.medicare) {
 }
 LOOKUP.envolve = envolveMap;
 
+// Medicare Advantage (UHC MA, Humana MA, BCBS MA, etc.): 80% of Medicare allowable
+const maMap = {};
+for (const [code, desc, rate] of RAW.medicare) {
+  const c = code.trim().toUpperCase();
+  maMap[c] = {desc, rate: rate !== null ? +(rate * 0.80).toFixed(2) : null};
+}
+LOOKUP.medicare_advantage = maMap;
+
 // ─── INSURANCE CHANGE ────────────────────────────────────────────────────────
 function onInsuranceChange() {
   const ins = document.getElementById("ins-select").value;
@@ -821,7 +838,6 @@ function calculate() {
 
     let p = 0;
     if (csType === "none") {
-      // Apply deductible only if any remains
       const dedApplied = Math.min(deductLeft, e.rate);
       p = dedApplied;
       deductLeft = +(deductLeft - dedApplied).toFixed(2);
@@ -831,22 +847,30 @@ function calculate() {
       p = +(dedApplied + afterDed * csVal / 100).toFixed(2);
       deductLeft = +(deductLeft - dedApplied).toFixed(2);
     } else if (csType === "copay") {
-      const dedApplied = Math.min(deductLeft, e.rate);
-      const afterDed = e.rate - dedApplied;
-      // If deductible still applies, patient pays deductible portion; copay applies once deductible met
-      p = dedApplied > 0 ? +(dedApplied + (afterDed > 0 ? csCopay : 0)).toFixed(2) : csCopay;
-      deductLeft = +(deductLeft - dedApplied).toFixed(2);
+      // Patient pays whichever is greater: deductible remaining or copay
+      if (deductLeft >= csCopay) {
+        const dedApplied = Math.min(deductLeft, e.rate);
+        p = dedApplied;
+        deductLeft = +(deductLeft - dedApplied).toFixed(2);
+      } else {
+        p = csCopay;
+        deductLeft = 0;
+      }
     } else if (csType === "both") {
+      // Deductible first, then copay + coinsurance on remainder
+      // But patient pays whichever is greater: deductible or (copay + coinsurance)
       const dedApplied = Math.min(deductLeft, e.rate);
       const afterDed = e.rate - dedApplied;
-      p = +(dedApplied + (afterDed > 0 ? csCopay + afterDed * csVal / 100 : 0)).toFixed(2);
+      const withCostShare = +(dedApplied + (afterDed > 0 ? csCopay + afterDed * csVal / 100 : 0)).toFixed(2);
+      const justDed = dedApplied;
+      p = Math.max(justDed, withCostShare);
       deductLeft = +(deductLeft - dedApplied).toFixed(2);
     }
     totP += p;
     addRow(tbody, raw, e.desc, e.rate, p);
   });
 
-  if (!tbody.innerHTML) { tbody.innerHTML = `<tr class="empty-row"><td colspan="4">No codes entered.</td></tr>`; document.getElementById("summary-cards").style.display = "none"; document.getElementById("unknown-notice").classList.remove("show"); return; }
+  if (!tbody.innerHTML) { tbody.innerHTML = `<tr class="empty-row"><td colspan="4">No codes entered.</td></tr>`; document.getElementById("summary-cards").style.display = "none"; document.getElementById("unknown-notice").classList.remove("show"); document.getElementById("secondary-notice").style.display = "none"; return; }
   if (hasRows) {
     document.getElementById("total-allowed").textContent = fmt(totA);
     document.getElementById("total-insurance").textContent = fmt(+(totA - totP).toFixed(2));
@@ -854,6 +878,8 @@ function calculate() {
     document.getElementById("summary-cards").style.display = "grid";
   } else { document.getElementById("summary-cards").style.display = "none"; }
   document.getElementById("unknown-notice").classList.toggle("show", hasUnk);
+  const hasSecondary = document.getElementById("has-secondary").checked;
+  document.getElementById("secondary-notice").style.display = hasSecondary && hasRows ? "block" : "none";
 }
 
 function addRow(tbody, code, desc, allowed, patient) {
@@ -878,6 +904,8 @@ function clearAll() {
   document.getElementById("coshare-copay").value = "30";
   document.getElementById("copay-type").value = "coinsurance";
   document.getElementById("deductible-remaining").value = "0";
+  document.getElementById("has-secondary").checked = false;
+  document.getElementById("secondary-notice").style.display = "none";
   updateCosharingUI();
   resetResults();
 }
