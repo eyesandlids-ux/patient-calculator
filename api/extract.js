@@ -31,7 +31,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { insurancePageText, financialsPageText, patientId } = req.body;
+  const { insurancePageText, financialsPageText, patientId, todaysDate } = req.body;
 
   try {
     const message = await client.messages.create({
@@ -57,8 +57,7 @@ Extract and return ONLY valid JSON with these fields:
   "secondaryInsurance": "full name or null",
   "hasSecondary": true or false,
   "stickyNote": "any benefit notes excluding IOP readings like (-1,-2)",
-  "todaysCptCodes": ["list of CPT codes from today's date only"],
-  "deductibleRemaining": 0,
+  "todaysCptCodes": ["ONLY CPT codes from visits dated ${todaysDate}. If no charges exist for today, return empty array []"],
   "copayAmount": 0,
   "csType": "coinsurance or copay or both or none",
   "coinsurancePct": 20,
