@@ -38,6 +38,11 @@
     .divider { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
     .auto-badge { background: #d1fae5; border: 1px solid #6ee7b7; color: #065f46; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 16px; display: none; }
     .auto-badge.show { display: block; }
+    .section-header { font-weight: 600; color: #374151; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.07em; margin: 16px 0 8px 0; }
+    .self-pay-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e2e8f0; font-size: 0.9rem; }
+    .grand-total { margin-top: 12px; padding: 12px 16px; background: #1a3a5c; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .grand-total span:first-child { color: white; font-weight: 600; font-size: 1rem; }
+    .grand-total span:last-child { color: white; font-weight: 700; font-size: 1.3rem; }
   </style>
 </head>
 <body>
@@ -119,6 +124,8 @@
 
     <div class="result" id="result">
       <h2 id="resultPatientName"></h2>
+
+      <div class="section-header" id="insuranceSectionHeader" style="display:none;">Insurance Responsibility</div>
       <div class="result-row"><span class="label">Insurance</span><span class="value" id="resultInsurance"></span></div>
       <div class="result-row"><span class="label">CPT Codes</span><span class="value" id="resultCptCodes"></span></div>
       <div class="result-row"><span class="label">Total Allowed</span><span class="value" id="resultTotalAllowed"></span></div>
@@ -127,6 +134,18 @@
       <div class="result-row highlight"><span class="label">Patient Owes</span><span class="value" id="resultPatientOwes"></span></div>
       <div class="notes" id="resultNotes" style="display:none"></div>
       <div id="secondaryNotice" style="display:none;margin-top:12px;padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:0.85rem;color:#166534;">⚠️ Secondary insurance on file — <strong>do not charge card yet.</strong> Wait for primary EOB before collecting. Maximum patient responsibility shown above.</div>
+
+      <div id="selfPaySection" style="display:none;margin-top:16px;">
+        <div class="section-header">Self-Pay / Products</div>
+        <div id="selfPayItems"></div>
+      </div>
+
+      <div id="grandTotalSection" style="display:none;margin-top:12px;">
+        <div class="grand-total">
+          <span>Total Due Today</span>
+          <span id="grandTotal">$0.00</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -176,20 +195,11 @@
       const stickyNote = document.getElementById('stickyNote').value.trim();
       const deductible = parseFloat(document.getElementById('deductible').value) || 0;
       const hasSecondary = document.getElementById('hasSecondary').checked;
+      const selfPayItems = window._selfPayItems || [];
 
-      if (!insurance) { showError('Please select an insurance.'); return; }
-
+      // If only self-pay items and no insurance codes, skip insurance calculation
       const cptInputs = document.querySelectorAll('.cpt-input');
       const cptCodes = Array.from(cptInputs).map(i => i.value.trim().toUpperCase()).filter(c => c.length >= 4);
-      if (cptCodes.length === 0) { showError('Please enter at least one CPT code.'); return; }
-
-      const schedule = FEE_SCHEDULES[insurance];
-      const cptRates = {};
-      const unknown = [];
-      for (const code of cptCodes) {
-        if (code in schedule) { cptRates[code] = schedule[code]; } else { unknown.push(code); }
-      }
-      if (Object.keys(cptRates).length === 0) { showError('None of the entered CPT codes were found in the fee schedule for this insurance.'); return; }
 
       const btn = document.getElementById('calculateBtn');
       btn.disabled = true;
@@ -198,40 +208,98 @@
       document.getElementById('error').classList.remove('show');
 
       try {
-        const response = await fetch('/api/calculate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ patientName: patientName || 'Patient', insurance, cptRates, stickyNote, deductible, unknownCodes: unknown, csType, coinsurancePct, copayAmt })
-        });
+        let insuranceOwed = 0;
+        let hasInsuranceResult = false;
 
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Something went wrong');
+        if (insurance && cptCodes.length > 0) {
+          const schedule = FEE_SCHEDULES[insurance];
+          const cptRates = {};
+          const unknown = [];
+          for (const code of cptCodes) {
+            if (code in schedule) { cptRates[code] = schedule[code]; } else { unknown.push(code); }
+          }
 
-        let result;
-        try {
-          const jsonMatch = data.result.match(/\{[\s\S]*\}/);
-          result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-        } catch(e) { result = null; }
+          if (Object.keys(cptRates).length > 0) {
+            const response = await fetch('/api/calculate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ patientName: patientName || 'Patient', insurance, cptRates, stickyNote, deductible, unknownCodes: unknown, csType, coinsurancePct, copayAmt })
+            });
 
-        if (result) {
-          document.getElementById('resultPatientName').textContent = result.patientName || patientName || 'Patient';
-          document.getElementById('resultInsurance').textContent = result.insurance || insurance;
-          document.getElementById('resultCptCodes').textContent = (result.cptCodes || cptCodes).join(', ');
-          document.getElementById('resultTotalAllowed').textContent = '$' + Number(result.totalAllowed || 0).toFixed(2);
-          document.getElementById('resultDeductible').textContent = '$' + Number(result.deductibleApplied || 0).toFixed(2);
-          document.getElementById('resultInsurancePays').textContent = '$' + Number(result.insurancePays || 0).toFixed(2);
-          document.getElementById('resultPatientOwes').textContent = '$' + Number(result.patientOwes || 0).toFixed(2);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'Something went wrong');
 
-          let notes = result.notes || '';
-          if (unknown.length > 0) notes += (notes ? ' | ' : '') + 'Unknown codes: ' + unknown.join(', ');
-          if (notes) { document.getElementById('resultNotes').textContent = '⚠️ ' + notes; document.getElementById('resultNotes').style.display = 'block'; }
-          else { document.getElementById('resultNotes').style.display = 'none'; }
+            let result;
+            try {
+              const jsonMatch = data.result.match(/\{[\s\S]*\}/);
+              result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+            } catch(e) { result = null; }
 
-          document.getElementById('secondaryNotice').style.display = hasSecondary ? 'block' : 'none';
-          document.getElementById('result').classList.add('show');
-        } else {
-          showError(data.result || 'Could not parse result.');
+            if (result) {
+              hasInsuranceResult = true;
+              insuranceOwed = Number(result.patientOwes || 0);
+
+              document.getElementById('insuranceSectionHeader').style.display = selfPayItems.length > 0 ? 'block' : 'none';
+              document.getElementById('resultPatientName').textContent = result.patientName || patientName || 'Patient';
+              document.getElementById('resultInsurance').textContent = result.insurance || insurance;
+              document.getElementById('resultCptCodes').textContent = (result.cptCodes || cptCodes).join(', ');
+              document.getElementById('resultTotalAllowed').textContent = '$' + Number(result.totalAllowed || 0).toFixed(2);
+              document.getElementById('resultDeductible').textContent = '$' + Number(result.deductibleApplied || 0).toFixed(2);
+              document.getElementById('resultInsurancePays').textContent = '$' + Number(result.insurancePays || 0).toFixed(2);
+              document.getElementById('resultPatientOwes').textContent = '$' + insuranceOwed.toFixed(2);
+
+              let notes = result.notes || '';
+              if (unknown.length > 0) notes += (notes ? ' | ' : '') + 'Unknown codes: ' + unknown.join(', ');
+              if (notes) { document.getElementById('resultNotes').textContent = '⚠️ ' + notes; document.getElementById('resultNotes').style.display = 'block'; }
+              else { document.getElementById('resultNotes').style.display = 'none'; }
+
+              document.getElementById('secondaryNotice').style.display = hasSecondary ? 'block' : 'none';
+            }
+          }
         }
+
+        if (!hasInsuranceResult) {
+          document.getElementById('resultPatientName').textContent = patientName || 'Patient';
+          document.getElementById('insuranceSectionHeader').style.display = 'none';
+          document.getElementById('resultInsurance').textContent = '—';
+          document.getElementById('resultCptCodes').textContent = '—';
+          document.getElementById('resultTotalAllowed').textContent = '$0.00';
+          document.getElementById('resultDeductible').textContent = '$0.00';
+          document.getElementById('resultInsurancePays').textContent = '$0.00';
+          document.getElementById('resultPatientOwes').textContent = '$0.00';
+          document.getElementById('resultNotes').style.display = 'none';
+          document.getElementById('secondaryNotice').style.display = 'none';
+        }
+
+        // Self-pay section
+        let selfPayTotal = 0;
+        if (selfPayItems.length > 0) {
+          const selfPaySection = document.getElementById('selfPaySection');
+          const selfPayContainer = document.getElementById('selfPayItems');
+          selfPaySection.style.display = 'block';
+          selfPayContainer.innerHTML = '';
+          selfPayItems.forEach(item => {
+            selfPayTotal += item.amount;
+            const row = document.createElement('div');
+            row.className = 'self-pay-row';
+            row.innerHTML = `<span style="color:#6b7280">${item.description}</span><span style="font-weight:600">$${Number(item.amount).toFixed(2)}</span>`;
+            selfPayContainer.appendChild(row);
+          });
+        } else {
+          document.getElementById('selfPaySection').style.display = 'none';
+        }
+
+        // Grand total
+        const grandTotal = insuranceOwed + selfPayTotal;
+        if (selfPayTotal > 0) {
+          document.getElementById('grandTotalSection').style.display = 'block';
+          document.getElementById('grandTotal').textContent = '$' + grandTotal.toFixed(2);
+        } else {
+          document.getElementById('grandTotalSection').style.display = 'none';
+        }
+
+        document.getElementById('result').classList.add('show');
+
       } catch (error) {
         showError(error.message);
       } finally {
@@ -246,7 +314,7 @@
       el.classList.add('show');
     }
 
-    // Auto-populate from URL parameters — must be at bottom after all functions defined
+    // Auto-populate from URL parameters — at bottom after all functions defined
     window.addEventListener('load', () => {
       const params = new URLSearchParams(window.location.search);
       if (params.get('auto')) {
@@ -279,6 +347,13 @@
             document.getElementById('cptInputs').appendChild(div);
           }
         });
+
+        // Parse self-pay items
+        const selfPayParam = params.get('selfPayItems');
+        if (selfPayParam) {
+          try { window._selfPayItems = JSON.parse(selfPayParam); }
+          catch(e) { window._selfPayItems = []; }
+        }
 
         document.getElementById('autoBadge').classList.add('show');
         setTimeout(() => calculate(), 800);
