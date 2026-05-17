@@ -377,6 +377,13 @@
 
     window.addEventListener('load', () => {
       const params = new URLSearchParams(window.location.search);
+
+      // Allow patient name to prefill even without auto=1 (used by Manual Lookup)
+      if (!params.get('auto') && params.get('patientName')) {
+        document.getElementById('patientName').value = params.get('patientName');
+        return;
+      }
+
       if (params.get('auto')) {
         const patientName = params.get('patientName');
         const insurance = params.get('insurance');
