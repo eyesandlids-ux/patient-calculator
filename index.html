@@ -26,6 +26,8 @@
     .result-row .label { color: #6b7280; }
     .result-row .value { font-weight: 600; color: #111827; }
     .result-row.highlight .value { color: #1a3a5c; font-size: 1.2rem; }
+    .result-row.credit .value { color: #047857; }
+    .result-row.net .value { color: #1a3a5c; font-size: 1.3rem; font-weight: 700; }
     .loading { text-align: center; color: #6b7280; padding: 20px; display: none; }
     .loading.show { display: block; }
     .error { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 12px; border-radius: 8px; margin-top: 16px; display: none; font-size: 0.9rem; }
@@ -100,6 +102,10 @@
         <label for="deductible">Remaining Deductible ($)</label>
         <input type="text" id="deductible" placeholder="0.00" value="0" />
       </div>
+      <div>
+        <label for="unappliedCredit">Unapplied Credit ($)</label>
+        <input type="text" id="unappliedCredit" placeholder="0.00" value="0" />
+      </div>
     </div>
 
     <hr class="divider">
@@ -137,9 +143,11 @@
       <div class="result-row"><span class="label">Total Allowed</span><span class="value" id="resultTotalAllowed"></span></div>
       <div class="result-row"><span class="label">Deductible Applied</span><span class="value" id="resultDeductible"></span></div>
       <div class="result-row"><span class="label">Insurance Pays</span><span class="value" id="resultInsurancePays"></span></div>
-      <div class="result-row highlight"><span class="label">Patient Owes</span><span class="value" id="resultPatientOwes"></span></div>
+      <div class="result-row highlight"><span class="label">Patient Owes (Gross)</span><span class="value" id="resultPatientOwes"></span></div>
+      <div class="result-row credit" id="creditRow" style="display:none;"><span class="label">Unapplied Credit on File</span><span class="value" id="resultCredit"></span></div>
+      <div class="result-row net" id="netDueRow" style="display:none;"><span class="label">Net Due Today</span><span class="value" id="resultNetDue"></span></div>
       <div class="notes" id="resultNotes" style="display:none"></div>
-      <div id="secondaryNotice" style="display:none;margin-top:12px;padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:0.85rem;color:#166534;">⚠️ Secondary insurance on file — <strong>do not charge card yet.</strong> Wait for primary EOB before collecting. Maximum patient responsibility shown above.</div>
+      <div id="secondaryNotice" style="display:none;margin-top:12px;padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:0.85rem;color:#166534;"></div>
 
       <div id="selfPaySection" style="display:none;margin-top:16px;">
         <div class="section-header">Self-Pay / Products</div>
@@ -181,6 +189,9 @@
       }
     }
 
+    // Holds the secondary-coverage decision passed from the extension
+    window._secondaryCoverage = '';
+
     function updateCostSharingUI() {
       const csType = document.getElementById('csType').value;
       document.getElementById('coinsuranceGroup').style.display = (csType === 'coinsurance' || csType === 'both') ? 'block' : 'none';
@@ -202,7 +213,9 @@
       const copayAmt = parseFloat(document.getElementById('copayAmt').value) || 0;
       const stickyNote = document.getElementById('stickyNote').value.trim();
       const deductible = parseFloat(document.getElementById('deductible').value) || 0;
+      const unappliedCredit = parseFloat(document.getElementById('unappliedCredit').value) || 0;
       const hasSecondary = document.getElementById('hasSecondary').checked;
+      const secondaryCoverage = window._secondaryCoverage || '';
       const selfPayItems = window._selfPayItems || [];
 
       const cptInputs = document.querySelectorAll('.cpt-input');
@@ -245,6 +258,15 @@
             if (result) {
               hasInsuranceResult = true;
               insuranceOwed = Number(result.patientOwes || 0);
+
+              // Apply secondary coverage decision (overrides patient responsibility)
+              // 'all'     -> secondary covers everything, gross is $0
+              // 'none'    -> secondary covers nothing, full primary amount stands
+              // 'partial' -> unknown, keep primary amount and flag in notice
+              if (hasSecondary && secondaryCoverage === 'all') {
+                insuranceOwed = 0;
+              }
+
               document.getElementById('insuranceSectionHeader').style.display = selfPayItems.length > 0 ? 'block' : 'none';
               document.getElementById('resultPatientName').textContent = result.patientName || patientName || 'Patient';
               document.getElementById('resultInsurance').textContent = result.insurance || insurance;
@@ -258,7 +280,25 @@
               if (unknown.length > 0) notes += (notes ? ' | ' : '') + 'Unknown codes: ' + unknown.join(', ');
               if (notes) { document.getElementById('resultNotes').textContent = '⚠️ ' + notes; document.getElementById('resultNotes').style.display = 'block'; }
               else { document.getElementById('resultNotes').style.display = 'none'; }
-              document.getElementById('secondaryNotice').style.display = hasSecondary ? 'block' : 'none';
+
+              // Secondary insurance notice — varies by coverage decision
+              const secNoticeEl = document.getElementById('secondaryNotice');
+              if (hasSecondary) {
+                let msg = '';
+                if (secondaryCoverage === 'all') {
+                  msg = '✅ Secondary insurance covers <strong>all</strong> of patient responsibility — <strong>$0 due today</strong>. Do not charge card; wait for primary EOB.';
+                } else if (secondaryCoverage === 'none') {
+                  msg = '⚠️ Secondary insurance does <strong>not</strong> cover this. Patient owes full amount above. Safe to collect today.';
+                } else if (secondaryCoverage === 'partial') {
+                  msg = '⚠️ Secondary insurance covers <strong>part</strong> of responsibility — exact amount unknown. <strong>Do not charge card yet.</strong> Wait for primary EOB; maximum patient responsibility shown above.';
+                } else {
+                  msg = '⚠️ Secondary insurance on file — <strong>do not charge card yet.</strong> Wait for primary EOB before collecting. Maximum patient responsibility shown above.';
+                }
+                secNoticeEl.innerHTML = msg;
+                secNoticeEl.style.display = 'block';
+              } else {
+                secNoticeEl.style.display = 'none';
+              }
             }
           }
         }
@@ -274,6 +314,20 @@
           document.getElementById('resultPatientOwes').textContent = '$0.00';
           document.getElementById('resultNotes').style.display = 'none';
           document.getElementById('secondaryNotice').style.display = 'none';
+        }
+
+        // Unapplied credit & net due rows
+        const creditRow = document.getElementById('creditRow');
+        const netDueRow = document.getElementById('netDueRow');
+        if (unappliedCredit > 0) {
+          const netDue = Math.max(0, insuranceOwed - unappliedCredit);
+          document.getElementById('resultCredit').textContent = '-$' + unappliedCredit.toFixed(2);
+          document.getElementById('resultNetDue').textContent = '$' + netDue.toFixed(2);
+          creditRow.style.display = 'flex';
+          netDueRow.style.display = 'flex';
+        } else {
+          creditRow.style.display = 'none';
+          netDueRow.style.display = 'none';
         }
 
         let selfPayTotal = 0;
@@ -293,7 +347,11 @@
           document.getElementById('selfPaySection').style.display = 'none';
         }
 
-        const grandTotal = insuranceOwed + selfPayTotal;
+        // Grand total = (net due after credit) + self pay
+        const netDueForTotal = unappliedCredit > 0
+          ? Math.max(0, insuranceOwed - unappliedCredit)
+          : insuranceOwed;
+        const grandTotal = netDueForTotal + selfPayTotal;
         if (selfPayTotal > 0) {
           document.getElementById('grandTotalSection').style.display = 'block';
           document.getElementById('grandTotal').textContent = '$' + grandTotal.toFixed(2);
@@ -326,9 +384,11 @@
         const coinsurancePct = params.get('coinsurancePct');
         const copayAmt = params.get('copayAmt');
         const deductible = params.get('deductible');
+        const unappliedCredit = params.get('unappliedCredit');
         const cptCodes = params.get('cptCodes') ? params.get('cptCodes').split(',') : [];
         const stickyNote = params.get('stickyNote');
         const hasSecondary = params.get('hasSecondary') === 'true';
+        const secondaryCoverage = params.get('secondaryCoverage') || '';
 
         if (patientName) document.getElementById('patientName').value = patientName;
         if (insurance) document.getElementById('insurance').value = insurance;
@@ -336,8 +396,10 @@
         if (coinsurancePct) document.getElementById('coinsurancePct').value = coinsurancePct;
         if (copayAmt) document.getElementById('copayAmt').value = copayAmt;
         if (deductible) document.getElementById('deductible').value = deductible;
+        if (unappliedCredit) document.getElementById('unappliedCredit').value = unappliedCredit;
         if (stickyNote) document.getElementById('stickyNote').value = stickyNote;
         if (hasSecondary) document.getElementById('hasSecondary').checked = true;
+        window._secondaryCoverage = secondaryCoverage;
 
         const cptInputs = document.querySelectorAll('.cpt-input');
         cptCodes.forEach((code, i) => {
