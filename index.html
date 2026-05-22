@@ -35,6 +35,7 @@
     .notes { margin-top: 12px; padding: 10px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px; font-size: 0.85rem; color: #92400e; }
     .cpt-row { display: flex; gap: 8px; margin-bottom: 8px; }
     .cpt-row input { flex: 1; margin-bottom: 0; }
+    .charge-input { max-width: 110px; }
     .add-cpt { background: #e5e7eb; color: #374151; border: none; padding: 8px 16px; border-radius: 8px; font-size: 0.85rem; cursor: pointer; width: auto; margin-bottom: 16px; }
     .add-cpt:hover { background: #d1d5db; }
     .divider { border: none; border-top: 1px solid #e5e7eb; margin: 20px 0; }
@@ -58,8 +59,9 @@
     <input type="text" id="patientName" placeholder="Last, First" />
 
     <label for="insurance">Insurance</label>
-    <select id="insurance">
+    <select id="insurance" onchange="updateSelfPayUI()">
       <option value="">— Select Insurance —</option>
+      <option value="self_pay">💵 Self-Pay (75% of charges)</option>
       <option value="medicare">Medicare</option>
       <option value="medicare_advantage">Medicare Advantage (MA)</option>
       <option value="humana">Humana (OON)</option>
@@ -97,6 +99,13 @@
       </div>
     </div>
 
+    <div class="row" id="selfPayDiscountRow" style="display:none;">
+      <div>
+        <label for="selfPayPct">Self-Pay Discount % of Charges</label>
+        <input type="number" id="selfPayPct" value="75" min="0" max="100" step="1" />
+      </div>
+    </div>
+
     <div class="row">
       <div>
         <label for="deductible">Remaining Deductible ($)</label>
@@ -110,15 +119,15 @@
 
     <hr class="divider">
 
-    <label>CPT Codes (today's visit)</label>
+    <label id="cptLabel">CPT Codes (today's visit)</label>
     <div id="cptInputs">
-      <div class="cpt-row"><input type="text" placeholder="e.g. 99214" maxlength="6" class="cpt-input" /></div>
-      <div class="cpt-row"><input type="text" placeholder="e.g. 92134" maxlength="6" class="cpt-input" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /></div>
+      <div class="cpt-row"><input type="text" placeholder="e.g. 99214" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" placeholder="e.g. 92134" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
     </div>
     <button class="add-cpt" onclick="addCptRow()">+ Add Code</button>
 
@@ -140,7 +149,7 @@
       <div class="section-header" id="insuranceSectionHeader" style="display:none;">Insurance Responsibility</div>
       <div class="result-row"><span class="label">Insurance</span><span class="value" id="resultInsurance"></span></div>
       <div class="result-row"><span class="label">CPT Codes</span><span class="value" id="resultCptCodes"></span></div>
-      <div class="result-row"><span class="label">Total Allowed</span><span class="value" id="resultTotalAllowed"></span></div>
+      <div class="result-row"><span class="label" id="resultTotalAllowedLabel">Total Allowed</span><span class="value" id="resultTotalAllowed"></span></div>
       <div class="result-row"><span class="label">Deductible Applied</span><span class="value" id="resultDeductible"></span></div>
       <div class="result-row"><span class="label">Insurance Pays</span><span class="value" id="resultInsurancePays"></span></div>
       <div class="result-row highlight"><span class="label">Patient Owes (Gross)</span><span class="value" id="resultPatientOwes"></span></div>
@@ -198,10 +207,31 @@
       document.getElementById('copayGroup').style.display = (csType === 'copay' || csType === 'both') ? 'block' : 'none';
     }
 
+    function isSelfPay() {
+      return document.getElementById('insurance').value === 'self_pay';
+    }
+
+    function updateSelfPayUI() {
+      const selfPay = isSelfPay();
+      // Show discount % field, show charge inputs, hide cost-sharing controls
+      document.getElementById('selfPayDiscountRow').style.display = selfPay ? 'flex' : 'none';
+      document.querySelectorAll('.charge-input').forEach(el => {
+        el.style.display = selfPay ? 'block' : 'none';
+      });
+      document.getElementById('cptLabel').textContent = selfPay
+        ? 'CPT Codes + Charges (enter the standard charge per code)'
+        : 'CPT Codes (today\'s visit)';
+      // Cost sharing is irrelevant for self-pay
+      document.getElementById('csType').closest('.container') &&
+        (document.getElementById('csType').parentElement.style.opacity = selfPay ? '0.4' : '1');
+    }
+
     function addCptRow() {
       const div = document.createElement('div');
       div.className = 'cpt-row';
-      div.innerHTML = '<input type="text" placeholder="e.g. 92250" maxlength="6" class="cpt-input" />';
+      const showCharge = isSelfPay() ? 'block' : 'none';
+      div.innerHTML = '<input type="text" placeholder="e.g. 92250" maxlength="6" class="cpt-input" />' +
+                      '<input type="text" placeholder="charge $" class="charge-input" style="display:' + showCharge + ';" />';
       document.getElementById('cptInputs').appendChild(div);
     }
 
@@ -231,7 +261,50 @@
         let insuranceOwed = 0;
         let hasInsuranceResult = false;
 
-        if (insurance && cptCodes.length > 0) {
+        // ----- SELF-PAY PATH -----
+        if (isSelfPay()) {
+          const selfPayPct = parseFloat(document.getElementById('selfPayPct').value) || 75;
+          const cptRows = document.querySelectorAll('#cptInputs .cpt-row');
+          const scraped = window._scrapedCharges || {}; // {code: charge} from auto-calc
+          let totalCharge = 0;
+          const lineItems = [];
+
+          cptRows.forEach(row => {
+            const codeEl = row.querySelector('.cpt-input');
+            const chargeEl = row.querySelector('.charge-input');
+            const code = codeEl ? codeEl.value.trim().toUpperCase() : '';
+            if (code.length < 4) return;
+            // Prefer manually-typed charge; fall back to scraped charge for this code
+            let charge = chargeEl ? parseFloat(chargeEl.value) : NaN;
+            if (isNaN(charge) || charge <= 0) {
+              charge = Number(scraped[code] || 0);
+            }
+            totalCharge += charge;
+            lineItems.push({ code, charge });
+          });
+
+          const patientOwesSelfPay = +(totalCharge * (selfPayPct / 100)).toFixed(2);
+          insuranceOwed = patientOwesSelfPay;
+          hasInsuranceResult = true;
+
+          document.getElementById('insuranceSectionHeader').style.display = selfPayItems.length > 0 ? 'block' : 'none';
+          document.getElementById('resultPatientName').textContent = patientName || 'Patient';
+          document.getElementById('resultInsurance').textContent = 'Self-Pay (' + selfPayPct + '% of charges)';
+          document.getElementById('resultCptCodes').textContent = lineItems.map(i => i.code).join(', ') || '—';
+          // Reuse the "Total Allowed" row to show total standard charges
+          document.getElementById('resultTotalAllowedLabel').textContent = 'Total Standard Charges';
+          document.getElementById('resultTotalAllowed').textContent = '$' + totalCharge.toFixed(2);
+          document.getElementById('resultDeductible').textContent = '$0.00';
+          document.getElementById('resultInsurancePays').textContent = '$0.00';
+          document.getElementById('resultPatientOwes').textContent = '$' + patientOwesSelfPay.toFixed(2);
+
+          let notes = 'Self-pay estimate: ' + selfPayPct + '% of standard charges ($' + totalCharge.toFixed(2) + ').';
+          if (totalCharge === 0) notes += ' ⚠️ No charges entered — type a charge per CPT code.';
+          document.getElementById('resultNotes').textContent = '⚠️ ' + notes;
+          document.getElementById('resultNotes').style.display = 'block';
+          document.getElementById('secondaryNotice').style.display = 'none';
+        }
+        else if (insurance && cptCodes.length > 0) {
           const schedule = FEE_SCHEDULES[insurance];
           const cptRates = {};
           const unknown = [];
@@ -258,6 +331,7 @@
             if (result) {
               hasInsuranceResult = true;
               insuranceOwed = Number(result.patientOwes || 0);
+              document.getElementById('resultTotalAllowedLabel').textContent = 'Total Allowed';
 
               // Apply secondary coverage decision (overrides patient responsibility)
               // 'all'     -> secondary covers everything, gross is $0
@@ -408,16 +482,35 @@
         if (hasSecondary) document.getElementById('hasSecondary').checked = true;
         window._secondaryCoverage = secondaryCoverage;
 
+        // Parse per-code charges (JSON map {code: charge}) from the scrape
+        let charges = {};
+        const chargesParam = params.get('charges');
+        if (chargesParam) {
+          try { charges = JSON.parse(chargesParam); } catch (e) { charges = {}; }
+        }
+        window._scrapedCharges = charges;
+
+        const isSelfPaySel = insurance === 'self_pay';
+
         const cptInputs = document.querySelectorAll('.cpt-input');
         cptCodes.forEach((code, i) => {
-          if (i < cptInputs.length) { cptInputs[i].value = code; }
-          else {
+          const chargeVal = charges[code] != null ? charges[code] : '';
+          if (i < cptInputs.length) {
+            cptInputs[i].value = code;
+            const row = cptInputs[i].closest('.cpt-row');
+            const chargeEl = row ? row.querySelector('.charge-input') : null;
+            if (chargeEl && chargeVal !== '') chargeEl.value = chargeVal;
+          } else {
             const div = document.createElement('div');
             div.className = 'cpt-row';
-            div.innerHTML = `<input type="text" maxlength="6" class="cpt-input" value="${code}" />`;
+            div.innerHTML = `<input type="text" maxlength="6" class="cpt-input" value="${code}" />` +
+                            `<input type="text" placeholder="charge $" class="charge-input" style="display:none;" value="${chargeVal}" />`;
             document.getElementById('cptInputs').appendChild(div);
           }
         });
+
+        // Apply self-pay UI state (shows charge inputs + discount field) AFTER rows exist
+        updateSelfPayUI();
 
         const selfPayParam = params.get('selfPayItems');
         if (selfPayParam) {
