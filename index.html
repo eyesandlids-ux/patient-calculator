@@ -352,7 +352,13 @@
               document.getElementById('insuranceSectionHeader').style.display = selfPayItems.length > 0 ? 'block' : 'none';
               document.getElementById('resultPatientName').textContent = result.patientName || patientName || 'Patient';
               document.getElementById('resultInsurance').textContent = result.insurance || insurance;
-              document.getElementById('resultCptCodes').textContent = (result.cptCodes || cptCodes).join(', ');
+              // result.cptCodes may come back as strings or objects from the API
+              const cptDisplay = (result.cptCodes || cptCodes).map(c => {
+                if (typeof c === 'string') return c;
+                if (c && typeof c === 'object') return c.code || c.cpt || JSON.stringify(c);
+                return String(c);
+              }).join(', ');
+              document.getElementById('resultCptCodes').textContent = cptDisplay;
               document.getElementById('resultTotalAllowed').textContent = '$' + Number(result.totalAllowed || 0).toFixed(2);
               document.getElementById('resultDeductible').textContent = '$' + Number(result.deductibleApplied || 0).toFixed(2);
               document.getElementById('resultInsurancePays').textContent = '$' + Number(result.insurancePays || 0).toFixed(2);
