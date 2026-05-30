@@ -158,6 +158,14 @@
       <div class="notes" id="resultNotes" style="display:none"></div>
       <div id="secondaryNotice" style="display:none;margin-top:12px;padding:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:0.85rem;color:#166534;"></div>
 
+      <div id="oopSection" style="display:none;margin-top:16px;">
+        <div class="section-header">Out-of-Pocket Tracking</div>
+        <div class="result-row" id="primaryOopRow" style="display:none;"><span class="label">Primary OOP Remaining</span><span class="value" id="resultPrimaryOOP"></span></div>
+        <div class="result-row" id="secondaryOopRow" style="display:none;"><span class="label">Secondary OOP Remaining</span><span class="value" id="resultSecondaryOOP"></span></div>
+        <div id="oopWarning" style="display:none;margin-top:10px;padding:12px;background:#fef3c7;border:2px solid #f59e0b;border-radius:6px;font-size:0.9rem;color:#92400e;font-weight:600;"></div>
+        <div id="oopMissingNote" style="display:none;margin-top:10px;padding:8px;background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;font-size:0.8rem;color:#475569;">ℹ️ OOP not tracked for this patient. Verify with staff if patient is near or past their max.</div>
+      </div>
+
       <div id="selfPaySection" style="display:none;margin-top:16px;">
         <div class="section-header">Self-Pay / Products</div>
         <div id="selfPayItems"></div>
@@ -390,6 +398,60 @@
           document.getElementById('secondaryNotice').style.display = 'none';
         }
 
+        // ----- OOP CAP -----
+        // Cap insuranceOwed at primary remaining OOP. We use primary because that's
+        // the first stop for patient cost. Secondary OOP is informational.
+        const primaryRemainingOOP = window._primaryRemainingOOP;
+        const secondaryRemainingOOP = window._secondaryRemainingOOP;
+        const oopSection = document.getElementById('oopSection');
+        const oopWarning = document.getElementById('oopWarning');
+        const oopMissingNote = document.getElementById('oopMissingNote');
+        const primaryOopRow = document.getElementById('primaryOopRow');
+        const secondaryOopRow = document.getElementById('secondaryOopRow');
+
+        // Show the section only when relevant (insurance result + we have some OOP info or no info but on auto-calc)
+        const hasOOPData = primaryRemainingOOP != null || secondaryRemainingOOP != null;
+        const isAutoCalc = !!window._isAutoCalc;
+        const showOOPSection = hasInsuranceResult && !isSelfPay() && (isAutoCalc || hasOOPData);
+
+        if (showOOPSection) {
+          oopSection.style.display = 'block';
+          // Reset
+          oopWarning.style.display = 'none';
+          oopMissingNote.style.display = 'none';
+          primaryOopRow.style.display = 'none';
+          secondaryOopRow.style.display = 'none';
+
+          if (primaryRemainingOOP != null) {
+            document.getElementById('resultPrimaryOOP').textContent = '$' + Number(primaryRemainingOOP).toFixed(2);
+            primaryOopRow.style.display = 'flex';
+          }
+          if (secondaryRemainingOOP != null) {
+            document.getElementById('resultSecondaryOOP').textContent = '$' + Number(secondaryRemainingOOP).toFixed(2);
+            secondaryOopRow.style.display = 'flex';
+          }
+
+          if (primaryRemainingOOP != null) {
+            const preCap = insuranceOwed;
+            if (primaryRemainingOOP <= 0) {
+              insuranceOwed = 0;
+              oopWarning.innerHTML = `⚠️ <strong>Patient has met OOP max — $0 due.</strong> Calculator would have charged $${preCap.toFixed(2)}. <strong>VERIFY before sending patient home.</strong>`;
+              oopWarning.style.display = 'block';
+              document.getElementById('resultPatientOwes').textContent = '$0.00';
+            } else if (preCap > primaryRemainingOOP) {
+              insuranceOwed = primaryRemainingOOP;
+              oopWarning.innerHTML = `⚠️ <strong>Capped at remaining OOP max ($${primaryRemainingOOP.toFixed(2)}).</strong> Calculator originally said $${preCap.toFixed(2)}. <strong>VERIFY before charging.</strong>`;
+              oopWarning.style.display = 'block';
+              document.getElementById('resultPatientOwes').textContent = '$' + insuranceOwed.toFixed(2);
+            }
+          } else if (isAutoCalc) {
+            // Auto-calc ran but OOP wasn't populated in ModMed for primary
+            oopMissingNote.style.display = 'block';
+          }
+        } else {
+          oopSection.style.display = 'none';
+        }
+
         // Unapplied credit & net due rows
         const creditRow = document.getElementById('creditRow');
         const netDueRow = document.getElementById('netDueRow');
@@ -451,6 +513,7 @@
 
     window.addEventListener('load', () => {
       const params = new URLSearchParams(window.location.search);
+      window._isAutoCalc = !!params.get('auto');
 
       // Allow patient name to prefill even without auto=1 (used by Manual Lookup)
       if (!params.get('auto') && params.get('patientName')) {
@@ -481,6 +544,13 @@
         if (stickyNote) document.getElementById('stickyNote').value = stickyNote;
         if (hasSecondary) document.getElementById('hasSecondary').checked = true;
         window._secondaryCoverage = secondaryCoverage;
+
+        // OOP info from extension (may be empty strings if not available)
+        const parseNum = v => (v === '' || v == null) ? null : Number(v);
+        window._primaryOOPMax = parseNum(params.get('primaryOOPMax'));
+        window._primaryRemainingOOP = parseNum(params.get('primaryRemainingOOP'));
+        window._secondaryOOPMax = parseNum(params.get('secondaryOOPMax'));
+        window._secondaryRemainingOOP = parseNum(params.get('secondaryRemainingOOP'));
 
         // Parse per-code charges (JSON map {code: charge}) from the scrape
         let charges = {};
