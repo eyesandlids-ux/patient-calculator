@@ -120,6 +120,28 @@
       </div>
     </div>
 
+    <div style="font-weight:600;color:#374151;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.07em;margin:8px 0 8px 0;">Out-of-Pocket Info <span style="font-weight:400;text-transform:none;letter-spacing:normal;color:#6b7280;font-size:0.85rem;">— verify or enter manually</span></div>
+    <div class="row">
+      <div>
+        <label for="primaryOopMaxInput">Primary OOP Max ($)</label>
+        <input type="text" id="primaryOopMaxInput" placeholder="0.00" />
+      </div>
+      <div>
+        <label for="primaryOopMetInput">Primary OOP Met ($)</label>
+        <input type="text" id="primaryOopMetInput" placeholder="0.00" />
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="secondaryOopMaxInput">Secondary OOP Max ($)</label>
+        <input type="text" id="secondaryOopMaxInput" placeholder="0.00" />
+      </div>
+      <div>
+        <label for="secondaryOopMetInput">Secondary OOP Met ($)</label>
+        <input type="text" id="secondaryOopMetInput" placeholder="0.00" />
+      </div>
+    </div>
+
     <hr class="divider">
 
     <label id="cptLabel">CPT Codes (today's visit)</label>
@@ -367,76 +389,115 @@
           const cptRates = {};
           const unknown = [];
           for (const code of cptCodes) {
-            if (code in schedule) { cptRates[code] = schedule[code]; } else { unknown.push(code); }
+            if (code in schedule) {
+              const r = schedule[code];
+              // Treat null/undefined as unknown (some Medicare entries are null)
+              if (r == null) unknown.push(code);
+              else cptRates[code] = r;
+            } else {
+              unknown.push(code);
+            }
           }
 
           if (Object.keys(cptRates).length > 0) {
-            const response = await fetch('/api/calculate', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ patientName: patientName || 'Patient', insurance, cptRates, stickyNote, deductible, unknownCodes: unknown, csType, coinsurancePct, copayAmt })
-            });
+            // ---- DETERMINISTIC CALCULATION ----
+            // Apply deductible first (across CPTs in sorted order, highest first
+            // so deductible eats up the biggest line items predictably).
+            // Then apply coinsurance% to the allowed-minus-deductible portion.
+            // Copay is a flat per-visit charge added on top.
+            const codes = Object.keys(cptRates);
+            const totalAllowed = codes.reduce((s, c) => s + Number(cptRates[c]), 0);
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Something went wrong');
+            let remainingDeductible = Number(deductible) || 0;
+            let deductibleApplied = 0;
+            let postDeductibleAllowed = 0;
 
-            let result;
-            try {
-              const jsonMatch = data.result.match(/\{[\s\S]*\}/);
-              result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-            } catch(e) { result = null; }
+            // Sort highest-allowed first to apply deductible against biggest charges
+            const sortedCodes = codes.slice().sort((a, b) => cptRates[b] - cptRates[a]);
+            for (const c of sortedCodes) {
+              const allowed = Number(cptRates[c]);
+              const fromDed = Math.min(allowed, remainingDeductible);
+              remainingDeductible -= fromDed;
+              deductibleApplied += fromDed;
+              postDeductibleAllowed += (allowed - fromDed);
+            }
 
-            if (result) {
-              hasInsuranceResult = true;
-              insuranceOwed = Number(result.patientOwes || 0);
-              document.getElementById('resultTotalAllowedLabel').textContent = 'Total Allowed';
+            // Cost-sharing decision
+            let coinsAmt = 0;
+            let copayAmtFinal = 0;
+            if (csType === 'coinsurance' || csType === 'both') {
+              coinsAmt = +(postDeductibleAllowed * (Number(coinsurancePct) / 100)).toFixed(2);
+            }
+            if (csType === 'copay' || csType === 'both') {
+              // Copay only applies if there's something left after deductible.
+              // If patient is paying 100% via deductible already, don't double-charge.
+              copayAmtFinal = postDeductibleAllowed > 0 ? Number(copayAmt) : 0;
+            }
+            // csType === 'none' -> both stay 0
 
-              // Apply secondary coverage decision (overrides patient responsibility)
-              // 'all'     -> secondary covers everything, gross is $0
-              // 'none'    -> secondary covers nothing, full primary amount stands
-              // 'partial' -> unknown, keep primary amount and flag in notice
-              if (hasSecondary && secondaryCoverage === 'all') {
-                insuranceOwed = 0;
-              }
+            const patientOwes = +(deductibleApplied + coinsAmt + copayAmtFinal).toFixed(2);
+            const insurancePays = +(totalAllowed - patientOwes).toFixed(2);
 
-              document.getElementById('insuranceSectionHeader').style.display = selfPayItems.length > 0 ? 'block' : 'none';
-              document.getElementById('resultPatientName').textContent = result.patientName || patientName || 'Patient';
-              document.getElementById('resultInsurance').textContent = result.insurance || insurance;
-              // result.cptCodes may come back as strings or objects from the API
-              const cptDisplay = (result.cptCodes || cptCodes).map(c => {
-                if (typeof c === 'string') return c;
-                if (c && typeof c === 'object') return c.code || c.cpt || JSON.stringify(c);
-                return String(c);
-              }).join(', ');
-              document.getElementById('resultCptCodes').textContent = cptDisplay;
-              document.getElementById('resultTotalAllowed').textContent = '$' + Number(result.totalAllowed || 0).toFixed(2);
-              document.getElementById('resultDeductible').textContent = '$' + Number(result.deductibleApplied || 0).toFixed(2);
-              document.getElementById('resultInsurancePays').textContent = '$' + Number(result.insurancePays || 0).toFixed(2);
-              document.getElementById('resultPatientOwes').textContent = '$' + insuranceOwed.toFixed(2);
+            hasInsuranceResult = true;
+            insuranceOwed = patientOwes;
+            document.getElementById('resultTotalAllowedLabel').textContent = 'Total Allowed';
 
-              let notes = result.notes || '';
-              if (unknown.length > 0) notes += (notes ? ' | ' : '') + 'Unknown codes: ' + unknown.join(', ');
-              if (notes) { document.getElementById('resultNotes').textContent = '⚠️ ' + notes; document.getElementById('resultNotes').style.display = 'block'; }
-              else { document.getElementById('resultNotes').style.display = 'none'; }
+            // Apply secondary coverage decision (overrides patient responsibility)
+            // 'all'     -> secondary covers everything, gross is $0
+            // 'none'    -> secondary covers nothing, full primary amount stands
+            // 'partial' -> unknown, keep primary amount and flag in notice
+            if (hasSecondary && secondaryCoverage === 'all') {
+              insuranceOwed = 0;
+            }
 
-              // Secondary insurance notice — varies by coverage decision
-              const secNoticeEl = document.getElementById('secondaryNotice');
-              if (hasSecondary) {
-                let msg = '';
-                if (secondaryCoverage === 'all') {
-                  msg = '✅ Secondary insurance covers <strong>all</strong> of patient responsibility — <strong>$0 due today</strong>. Do not charge card; wait for primary EOB.';
-                } else if (secondaryCoverage === 'none') {
-                  msg = '⚠️ Secondary insurance does <strong>not</strong> cover this. Patient owes full amount above. Safe to collect today.';
-                } else if (secondaryCoverage === 'partial') {
-                  msg = '⚠️ Secondary insurance covers <strong>part</strong> of responsibility — exact amount unknown. <strong>Do not charge card yet.</strong> Wait for primary EOB; maximum patient responsibility shown above.';
-                } else {
-                  msg = '⚠️ Secondary insurance on file — <strong>do not charge card yet.</strong> Wait for primary EOB before collecting. Maximum patient responsibility shown above.';
-                }
-                secNoticeEl.innerHTML = msg;
-                secNoticeEl.style.display = 'block';
+            // Build human-readable notes explaining the math
+            let calcNote = '';
+            const noteParts = [];
+            if (deductibleApplied > 0) noteParts.push(`Deductible applied: $${deductibleApplied.toFixed(2)}`);
+            if (csType === 'coinsurance' || csType === 'both') {
+              noteParts.push(`${coinsurancePct}% coinsurance on $${postDeductibleAllowed.toFixed(2)} = $${coinsAmt.toFixed(2)}`);
+            }
+            if (csType === 'copay' || csType === 'both') {
+              if (copayAmtFinal > 0) noteParts.push(`Copay: $${copayAmtFinal.toFixed(2)}`);
+            }
+            if (csType === 'none') noteParts.push('No cost sharing (insurance pays in full above deductible)');
+            calcNote = noteParts.join('. ') + '.';
+
+            document.getElementById('insuranceSectionHeader').style.display = selfPayItems.length > 0 ? 'block' : 'none';
+            document.getElementById('resultPatientName').textContent = patientName || 'Patient';
+            document.getElementById('resultInsurance').textContent = insurance;
+            document.getElementById('resultCptCodes').textContent = codes.join(', ');
+            document.getElementById('resultTotalAllowed').textContent = '$' + totalAllowed.toFixed(2);
+            document.getElementById('resultDeductible').textContent = '$' + deductibleApplied.toFixed(2);
+            document.getElementById('resultInsurancePays').textContent = '$' + insurancePays.toFixed(2);
+            document.getElementById('resultPatientOwes').textContent = '$' + insuranceOwed.toFixed(2);
+
+            let notes = calcNote;
+            if (unknown.length > 0) notes += ' | Unknown codes (no fee schedule entry): ' + unknown.join(', ');
+            if (notes) {
+              document.getElementById('resultNotes').textContent = '⚠️ ' + notes;
+              document.getElementById('resultNotes').style.display = 'block';
+            } else {
+              document.getElementById('resultNotes').style.display = 'none';
+            }
+
+            // Secondary insurance notice — varies by coverage decision
+            const secNoticeEl = document.getElementById('secondaryNotice');
+            if (hasSecondary) {
+              let msg = '';
+              if (secondaryCoverage === 'all') {
+                msg = '✅ Secondary insurance covers <strong>all</strong> of patient responsibility — <strong>$0 due today</strong>. Do not charge card; wait for primary EOB.';
+              } else if (secondaryCoverage === 'none') {
+                msg = '⚠️ Secondary insurance does <strong>not</strong> cover this. Patient owes full amount above. Safe to collect today.';
+              } else if (secondaryCoverage === 'partial') {
+                msg = '⚠️ Secondary insurance covers <strong>part</strong> of responsibility — exact amount unknown. <strong>Do not charge card yet.</strong> Wait for primary EOB; maximum patient responsibility shown above.';
               } else {
-                secNoticeEl.style.display = 'none';
+                msg = '⚠️ Secondary insurance on file — <strong>do not charge card yet.</strong> Wait for primary EOB before collecting. Maximum patient responsibility shown above.';
               }
+              secNoticeEl.innerHTML = msg;
+              secNoticeEl.style.display = 'block';
+            } else {
+              secNoticeEl.style.display = 'none';
             }
           }
         }
@@ -457,8 +518,36 @@
         // ----- OOP CAP -----
         // Cap insuranceOwed at primary remaining OOP. We use primary because that's
         // the first stop for patient cost. Secondary OOP is informational.
-        const primaryRemainingOOP = window._primaryRemainingOOP;
-        const secondaryRemainingOOP = window._secondaryRemainingOOP;
+        // OOP can come from two sources:
+        //   1) Manual input fields (primaryOopMaxInput / primaryOopMetInput, secondary equivalents)
+        //   2) Extension-passed values (window._primaryRemainingOOP / window._secondaryRemainingOOP)
+        // Manual input wins when filled out (lets staff override / verify); falls back to extension.
+        const parseInputNum = (id) => {
+          const v = document.getElementById(id).value.trim();
+          if (v === '') return null;
+          const n = parseFloat(v);
+          return isNaN(n) ? null : n;
+        };
+        const primaryMaxIn = parseInputNum('primaryOopMaxInput');
+        const primaryMetIn = parseInputNum('primaryOopMetInput');
+        const secondaryMaxIn = parseInputNum('secondaryOopMaxInput');
+        const secondaryMetIn = parseInputNum('secondaryOopMetInput');
+
+        // Derive primary remaining: from inputs if both filled, else fall back to extension value
+        let primaryRemainingOOP;
+        if (primaryMaxIn != null && primaryMetIn != null) {
+          primaryRemainingOOP = Math.max(0, primaryMaxIn - primaryMetIn);
+        } else {
+          primaryRemainingOOP = window._primaryRemainingOOP;
+        }
+
+        let secondaryRemainingOOP;
+        if (secondaryMaxIn != null && secondaryMetIn != null) {
+          secondaryRemainingOOP = Math.max(0, secondaryMaxIn - secondaryMetIn);
+        } else {
+          secondaryRemainingOOP = window._secondaryRemainingOOP;
+        }
+
         const oopSection = document.getElementById('oopSection');
         const oopWarning = document.getElementById('oopWarning');
         const oopMissingNote = document.getElementById('oopMissingNote');
@@ -607,6 +696,23 @@
         window._primaryRemainingOOP = parseNum(params.get('primaryRemainingOOP'));
         window._secondaryOOPMax = parseNum(params.get('secondaryOOPMax'));
         window._secondaryRemainingOOP = parseNum(params.get('secondaryRemainingOOP'));
+
+        // Also populate the editable OOP input boxes so the user sees what came over
+        // (Max - Remaining = Met)
+        if (window._primaryOOPMax != null) {
+          document.getElementById('primaryOopMaxInput').value = window._primaryOOPMax.toFixed(2);
+        }
+        if (window._primaryOOPMax != null && window._primaryRemainingOOP != null) {
+          const met = Math.max(0, window._primaryOOPMax - window._primaryRemainingOOP);
+          document.getElementById('primaryOopMetInput').value = met.toFixed(2);
+        }
+        if (window._secondaryOOPMax != null) {
+          document.getElementById('secondaryOopMaxInput').value = window._secondaryOOPMax.toFixed(2);
+        }
+        if (window._secondaryOOPMax != null && window._secondaryRemainingOOP != null) {
+          const met = Math.max(0, window._secondaryOOPMax - window._secondaryRemainingOOP);
+          document.getElementById('secondaryOopMetInput').value = met.toFixed(2);
+        }
 
         // Parse per-code charges (JSON map {code: charge}) from the scrape
         let charges = {};
