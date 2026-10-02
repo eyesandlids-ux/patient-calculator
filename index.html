@@ -46,6 +46,25 @@
     .grand-total { margin-top: 12px; padding: 12px 16px; background: #1a3a5c; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
     .grand-total span:first-child { color: white; font-weight: 600; font-size: 1rem; }
     .grand-total span:last-child { color: white; font-weight: 700; font-size: 1.3rem; }
+  
+    .mod50-label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: #1a3a5c;
+      cursor: pointer;
+      white-space: nowrap;
+      padding: 0 4px;
+    }
+    .mod50-label input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+      cursor: pointer;
+    }
+    .mod50-label span { user-select: none; }
+
   </style>
 </head>
 <body>
@@ -146,13 +165,13 @@
 
     <label id="cptLabel">CPT Codes (today's visit)</label>
     <div id="cptInputs">
-      <div class="cpt-row"><input type="text" placeholder="e.g. 99214" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
-      <div class="cpt-row"><input type="text" placeholder="e.g. 92134" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
-      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" placeholder="e.g. 99214" maxlength="6" class="cpt-input" /><label class="mod50-label"><input type="checkbox" class="mod50-input" /><span>-50</span></label><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" placeholder="e.g. 92134" maxlength="6" class="cpt-input" /><label class="mod50-label"><input type="checkbox" class="mod50-input" /><span>-50</span></label><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><label class="mod50-label"><input type="checkbox" class="mod50-input" /><span>-50</span></label><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><label class="mod50-label"><input type="checkbox" class="mod50-input" /><span>-50</span></label><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><label class="mod50-label"><input type="checkbox" class="mod50-input" /><span>-50</span></label><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><label class="mod50-label"><input type="checkbox" class="mod50-input" /><span>-50</span></label><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
+      <div class="cpt-row"><input type="text" maxlength="6" class="cpt-input" /><label class="mod50-label"><input type="checkbox" class="mod50-input" /><span>-50</span></label><input type="text" placeholder="charge $" class="charge-input" style="display:none;" /></div>
     </div>
     <button class="add-cpt" onclick="addCptRow()">+ Add Code</button>
 
@@ -315,6 +334,35 @@
       document.getElementById('cptInputs').appendChild(div);
     }
 
+
+    // ── Exempt from multiple-procedure reduction ─────────────────────────────
+    const EXEMPT_CODES = new Set([
+      '99202','99203','99204','99205',
+      '99212','99213','99214','99215',
+      '99222','99223','99231','99024',
+      '92002','92004','92012','92014',
+      '92083','92082','92081','92136','92250','92133','92134','92132',
+      '92025','92020','92285','92225','76514','92071',
+    ]);
+    function isJCode(c) { return /^J/i.test(c); }
+    function isExempt(c) { return EXEMPT_CODES.has(c) || isJCode(c); }
+    function applyMPR(cptRates) {
+      const exempt = [], nonExempt = [];
+      for (const [code, rate] of Object.entries(cptRates)) {
+        if (rate == null) continue;
+        if (isExempt(code)) exempt.push({ code, rate: Number(rate) });
+        else nonExempt.push({ code, rate: Number(rate) });
+      }
+      nonExempt.sort((a, b) => b.rate - a.rate);
+      const adj = {};
+      for (const { code, rate } of exempt) adj[code] = rate;
+      nonExempt.forEach(({ code, rate }, idx) => {
+        const m = idx === 0 ? 1.0 : idx === 1 ? 0.5 : 0.25;
+        adj[code] = +(rate * m).toFixed(2);
+      });
+      return adj;
+    }
+
     async function calculate() {
       const patientName = document.getElementById('patientName').value.trim();
       const insurance = document.getElementById('insurance').value;
@@ -329,7 +377,18 @@
       const selfPayItems = window._selfPayItems || [];
 
       const cptInputs = document.querySelectorAll('.cpt-input');
-      const cptCodes = Array.from(cptInputs).map(i => i.value.trim().toUpperCase()).filter(c => c.length >= 4);
+      const cptRows2 = document.querySelectorAll('#cptInputs .cpt-row');
+      const cptCodes = [];
+      const mod50Set = new Set();
+      cptRows2.forEach(row => {
+        const inp = row.querySelector('.cpt-input');
+        const cb  = row.querySelector('.mod50-input');
+        const code = inp ? inp.value.trim().toUpperCase() : '';
+        if (code.length >= 4) {
+          cptCodes.push(code);
+          if (cb && cb.checked) mod50Set.add(code);
+        }
+      });
 
       const btn = document.getElementById('calculateBtn');
       btn.disabled = true;
@@ -393,29 +452,26 @@
               const r = schedule[code];
               // Treat null/undefined as unknown (some Medicare entries are null)
               if (r == null) unknown.push(code);
-              else cptRates[code] = r;
+              else cptRates[code] = mod50Set.has(code) ? +(r * 1.5).toFixed(2) : r;
             } else {
               unknown.push(code);
             }
           }
 
           if (Object.keys(cptRates).length > 0) {
-            // ---- DETERMINISTIC CALCULATION ----
-            // Apply deductible first (across CPTs in sorted order, highest first
-            // so deductible eats up the biggest line items predictably).
-            // Then apply coinsurance% to the allowed-minus-deductible portion.
-            // Copay is a flat per-visit charge added on top.
-            const codes = Object.keys(cptRates);
-            const totalAllowed = codes.reduce((s, c) => s + Number(cptRates[c]), 0);
+            // ---- DETERMINISTIC CALCULATION with MPR ----
+            const adjustedRates = applyMPR(cptRates);
+            const codes = Object.keys(adjustedRates);
+            const totalAllowed = codes.reduce((s, c) => s + Number(adjustedRates[c]), 0);
 
             let remainingDeductible = Number(deductible) || 0;
             let deductibleApplied = 0;
             let postDeductibleAllowed = 0;
 
             // Sort highest-allowed first to apply deductible against biggest charges
-            const sortedCodes = codes.slice().sort((a, b) => cptRates[b] - cptRates[a]);
+            const sortedCodes = codes.slice().sort((a, b) => adjustedRates[b] - adjustedRates[a]);
             for (const c of sortedCodes) {
-              const allowed = Number(cptRates[c]);
+              const allowed = Number(adjustedRates[c]);
               const fromDed = Math.min(allowed, remainingDeductible);
               remainingDeductible -= fromDed;
               deductibleApplied += fromDed;
