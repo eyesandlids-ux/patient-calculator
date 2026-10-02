@@ -1,148 +1,187 @@
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic from '@anthropic-ai/sdk';
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-// Codes exempt from multiple procedure reduction — always paid at 100%
+// ── Exempt from multiple-procedure reduction ──────────────────────────────────
 const EXEMPT_CODES = new Set([
   // E&M
   '99202','99203','99204','99205',
   '99212','99213','99214','99215',
-  '99223','99222','99231','99024',
+  '99222','99223','99231','99024',
   // Eye exams
   '92002','92004','92012','92014',
-  // Diagnostics / imaging / minor procedures that don't reduce
+  // Diagnostics
   '92083','92082','92081','92136','92250','92133','92134','92132',
   '92025','92020','92285','92225','76514','92071',
-  // Injections / J-codes handled separately
 ]);
 
 function isJCode(code) {
-  return /^J\d{4}$/.test(code);
+  return /^J/i.test(code);
 }
 
-function applyMultipleProcedureReduction(cptRates, bilateralCodes) {
-  // bilateralCodes: set of codes billed with -50 modifier (bilateral)
-  // Step 1: calculate effective allowed for each code
-  const entries = Object.entries(cptRates).map(([code, rate]) => {
-    if (rate === null || rate === undefined) return { code, rate, effective: 0, exempt: true };
-    
-    const exempt = EXEMPT_CODES.has(code) || isJCode(code);
-    let effective = parseFloat(rate) || 0;
-    
-    // Apply bilateral multiplier first (150% if bilateral)
-    if (!exempt && bilateralCodes && bilateralCodes.has(code)) {
-      effective = effective * 1.5;
+function isExempt(code) {
+  return EXEMPT_CODES.has(code) || isJCode(code);
+}
+
+/**
+ * Apply CMS multiple-procedure reduction rules:
+ *   1. Sort non-exempt codes by allowed amount descending.
+ *   2. 1st → 100%, 2nd → 50%, 3rd+ → 25%.
+ *   3. Exempt codes always pay 100%.
+ * Returns { adjustedRates, notes }
+ */
+function applyMultipleProcedureReduction(cptRates) {
+  const exempt = [];
+  const nonExempt = [];
+
+  for (const [code, rate] of Object.entries(cptRates)) {
+    if (rate === null || rate === undefined) continue;
+    if (isExempt(code)) {
+      exempt.push({ code, rate: Number(rate) });
+    } else {
+      nonExempt.push({ code, rate: Number(rate) });
     }
-    
-    return { code, rate: parseFloat(rate) || 0, effective, exempt };
+  }
+
+  // Sort non-exempt highest-to-lowest
+  nonExempt.sort((a, b) => b.rate - a.rate);
+
+  const adjustedRates = {};
+  const notes = [];
+
+  // Exempt codes: 100%
+  for (const { code, rate } of exempt) {
+    adjustedRates[code] = rate;
+  }
+
+  // Non-exempt: tiered reduction
+  nonExempt.forEach(({ code, rate }, idx) => {
+    let multiplier = 1.0;
+    if (idx === 0) multiplier = 1.0;
+    else if (idx === 1) multiplier = 0.5;
+    else multiplier = 0.25;
+
+    const adjusted = +(rate * multiplier).toFixed(2);
+    adjustedRates[code] = adjusted;
+
+    if (multiplier < 1.0) {
+      notes.push(`${code}: reduced to ${Math.round(multiplier * 100)}% ($${adjusted.toFixed(2)})`);
+    }
   });
 
-  // Step 2: separate exempt from non-exempt procedures
-  const exempt = entries.filter(e => e.exempt);
-  const procedures = entries.filter(e => !e.exempt && e.effective > 0);
-
-  // Step 3: sort procedures by effective allowed amount descending
-  procedures.sort((a, b) => b.effective - a.effective);
-
-  // Step 4: apply multiple procedure reduction
-  const adjusted = {};
-  
-  // Exempt codes always at full rate
-  exempt.forEach(e => {
-    adjusted[e.code] = e.rate;
-  });
-
-  // Procedures ranked and reduced
-  procedures.forEach((e, index) => {
-    let multiplier;
-    if (index === 0) multiplier = 1.00;      // 1st procedure: 100%
-    else if (index === 1) multiplier = 0.50;  // 2nd procedure: 50%
-    else multiplier = 0.25;                   // 3rd+: 25%
-    
-    adjusted[e.code] = +(e.effective * multiplier).toFixed(2);
-  });
-
-  return adjusted;
+  return { adjustedRates, notes };
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { 
-    patientName, insurance, cptRates, stickyNote, deductible, 
-    unknownCodes, csType, coinsurancePct, copayAmt, bilateralCodes 
+  const {
+    patientName,
+    insurance,
+    cptRates,
+    stickyNote,
+    deductible = 0,
+    unknownCodes = [],
+    csType = 'coinsurance',
+    coinsurancePct = 20,
+    copayAmt = 0,
+    selfPayItems = [],
+    secondaryCoverage = 'none',
+    secondaryName = '',
   } = req.body;
 
-  try {
-    // Apply multiple procedure reduction before sending to Claude
-    const bilateralSet = bilateralCodes ? new Set(bilateralCodes) : new Set();
-    const adjustedRates = applyMultipleProcedureReduction(cptRates, bilateralSet);
+  if (!cptRates || Object.keys(cptRates).length === 0) {
+    return res.status(400).json({ error: 'No CPT rates provided' });
+  }
 
-    // Build a note about reductions applied for transparency
-    const reductionNotes = [];
-    const origEntries = Object.entries(cptRates);
-    const adjEntries = Object.entries(adjustedRates);
-    adjEntries.forEach(([code, adjRate]) => {
-      const origRate = parseFloat(cptRates[code]) || 0;
-      if (adjRate !== origRate && !EXEMPT_CODES.has(code) && !isJCode(code)) {
-        const pct = origRate > 0 ? Math.round((adjRate / origRate) * 100) : 0;
-        reductionNotes.push(`${code}: reduced to ${pct}% ($${adjRate.toFixed(2)})`);
-      }
-    });
+  // ── Apply multiple-procedure reduction ───────────────────────────────────────
+  const { adjustedRates, notes: reductionNotes } = applyMultipleProcedureReduction(cptRates);
 
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content: `You are a medical billing assistant for Remagin ophthalmology practice.
+  // ── Compute totals deterministically in JS ────────────────────────────────────
+  const totalAllowed = Object.values(adjustedRates).reduce((s, v) => s + (v || 0), 0);
 
-Patient: ${patientName}
-Insurance: ${insurance}
-Cost Sharing Type: ${csType || 'coinsurance'}
-Coinsurance %: ${coinsurancePct || 20}
-Copay Amount: $${copayAmt || 0}
-Remaining Deductible: $${deductible || 0}
-Sticky Note: ${stickyNote || "None"}
-Unknown codes (exclude): ${(unknownCodes || []).join(", ") || "None"}
-${reductionNotes.length > 0 ? `Multiple procedure reduction already applied: ${reductionNotes.join(', ')}` : ''}
+  // Self-pay items total (billed 100% to patient regardless)
+  const selfPayTotal = (selfPayItems || []).reduce((s, item) => {
+    if (!item || item.code === 'NOCHARGE' || item.code === 'RECHECK') return s;
+    return s + (Number(item.charge) || 0);
+  }, 0);
 
-CPT codes and allowed amounts (already adjusted for multiple procedure reduction):
-${JSON.stringify(adjustedRates, null, 2)}
+  // Cost-sharing on insurance portion
+  const ded = Number(deductible) || 0;
+  let patientCostShare = 0;
+  let deductibleApplied = 0;
+  let insurancePays = 0;
 
-Calculate patient responsibility using EXACT rates above. Rules:
-- coinsurance: apply deductible first, then patient pays coinsurance% of remainder
-- copay: patient pays whichever is GREATER — the remaining deductible OR the copay (not both added together). Once deductible is met, patient pays just the copay.
-- both: apply deductible first, then patient pays copay + coinsurance% on remainder. Patient pays whichever is greater — deductible or (copay + coinsurance).
-- none: patient pays $0
-- Key rule: copay counts toward the deductible. Never add deductible + copay together.
-- If the sticky note contains specific benefit details (copay amount, deductible info, OOP max, etc.), use those values instead of the default cost sharing settings. The sticky note is the source of truth for patient-specific benefits.
-- Sum all codes together
+  if (csType === 'copay') {
+    const copay = Number(copayAmt) || 0;
+    patientCostShare = copay;
+    insurancePays = Math.max(0, totalAllowed - copay);
+    deductibleApplied = 0;
+  } else {
+    // coinsurance
+    const pct = Number(coinsurancePct) || 20;
+    deductibleApplied = Math.min(ded, totalAllowed);
+    const afterDed = Math.max(0, totalAllowed - deductibleApplied);
+    const coinsurance = +(afterDed * pct / 100).toFixed(2);
+    patientCostShare = +(deductibleApplied + coinsurance).toFixed(2);
+    insurancePays = +(totalAllowed - patientCostShare).toFixed(2);
+  }
 
-Return ONLY valid JSON:
+  const patientOwes = +(patientCostShare + selfPayTotal).toFixed(2);
+
+  // Build a summary for Claude to add any narrative notes (sticky note, secondary, etc.)
+  // We pass the ALREADY-COMPUTED numbers so Claude just formats and comments.
+  const codeLines = Object.entries(adjustedRates)
+    .map(([code, rate]) => {
+      const orig = cptRates[code];
+      const reduced = orig !== undefined && +orig !== +rate;
+      return `  ${code}: $${rate.toFixed(2)}${reduced ? ` (reduced from $${Number(orig).toFixed(2)})` : ''}`;
+    })
+    .join('\n');
+
+  const prompt = `You are a medical billing assistant for Remagin, an ophthalmology practice.
+
+COMPUTED RESULTS (do NOT recalculate — use these exact numbers):
+- Insurance: ${insurance}
+- Patient: ${patientName || 'Patient'}
+- CPT codes with ADJUSTED allowed amounts (multiple-procedure reduction already applied):
+${codeLines}
+- Total Allowed: $${totalAllowed.toFixed(2)}
+- Deductible Applied: $${deductibleApplied.toFixed(2)}
+- Insurance Pays: $${insurancePays.toFixed(2)}
+- Patient Cost Share (CPT): $${patientCostShare.toFixed(2)}
+- Self-Pay Items Total: $${selfPayTotal.toFixed(2)}
+- Patient Owes (Total): $${patientOwes.toFixed(2)}
+${reductionNotes.length ? `- Reduction notes: ${reductionNotes.join('; ')}` : ''}
+${stickyNote ? `\nBenefit note from chart: "${stickyNote}"` : ''}
+${unknownCodes.length ? `\nUnknown CPT codes (no rate): ${unknownCodes.join(', ')}` : ''}
+${secondaryCoverage !== 'none' ? `\nSecondary insurance (${secondaryName}): coverage = ${secondaryCoverage}` : ''}
+
+Return ONLY this JSON (no extra text):
 {
-  "patientName": "",
-  "insurance": "",
-  "cptCodes": [],
-  "deductibleApplied": 0.00,
-  "totalAllowed": 0.00,
-  "insurancePays": 0.00,
-  "patientOwes": 0.00,
-  "notes": ""
-}`
-        }
-      ]
+  "patientName": "${patientName || 'Patient'}",
+  "insurance": "${insurance}",
+  "cptCodes": ${JSON.stringify(Object.keys(adjustedRates))},
+  "totalAllowed": ${totalAllowed.toFixed(2)},
+  "deductibleApplied": ${deductibleApplied.toFixed(2)},
+  "insurancePays": ${insurancePays.toFixed(2)},
+  "patientOwes": ${patientOwes.toFixed(2)},
+  "notes": "<one sentence: mention any reduction applied, sticky note override, secondary coverage, or unknown codes — blank string if nothing notable>"
+}`;
+
+  try {
+    const message = await client.messages.create({
+      model: 'claude-opus-4-5',
+      max_tokens: 512,
+      messages: [{ role: 'user', content: prompt }],
     });
 
-    const response = message.content[0].text;
-    res.status(200).json({ result: response });
-  } catch (error) {
-    console.error("Error:", error);
-    res.status(500).json({ error: error.message });
+    const result = message.content[0].text;
+    return res.status(200).json({ result });
+  } catch (err) {
+    console.error('Anthropic error:', err);
+    return res.status(500).json({ error: err.message || 'AI call failed' });
   }
 }
